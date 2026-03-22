@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Grecko bug hunter sigil">
+  <defs>
+    <linearGradient id="coin" x1="12" x2="116" y1="12" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d2a264"/>
+      <stop offset="1" stop-color="#7c4d23"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="url(#coin)"/>
+  <circle cx="64" cy="64" r="46" fill="none" stroke="#f7e7c6" stroke-opacity=".65" stroke-width="3"/>
+  <path d="M44 40h20c14 0 24 9 24 24s-10 24-24 24H44z" fill="#fdf1da"/>
+  <path d="M53 52h12c7 0 12 5 12 12s-5 12-12 12H53z" fill="#7c4d23"/>
+  <circle cx="83" cy="55" r="5" fill="#fdf1da"/>
+  <path d="M39 50 23 38m16 40-17 13m31-43 4-18m0 68 2 16" stroke="#fdf1da" stroke-linecap="round" stroke-width="5"/>
+</svg>
