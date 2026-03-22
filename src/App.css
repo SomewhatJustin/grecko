@@ -206,7 +206,8 @@
   font-size: 0.94rem;
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   border-radius: 1rem;
   border: 1px solid rgba(84, 51, 20, 0.18);
@@ -216,7 +217,8 @@
   font: inherit;
 }
 
-.field input:focus-visible {
+.field input:focus-visible,
+.field select:focus-visible {
   outline: 2px solid rgba(41, 96, 92, 0.55);
   outline-offset: 2px;
 }
@@ -338,6 +340,7 @@
 }
 
 .panel--runner,
+.panel--harness-runtime,
 .panel--bridge,
 .panel--findings,
 .panel--harnesses {
@@ -388,7 +391,7 @@
 
 .stage-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.8rem;
   margin-top: 1rem;
 }
@@ -490,6 +493,11 @@
   color: var(--accent-strong);
 }
 
+.provider--attached {
+  background: rgba(41, 96, 92, 0.1);
+  color: var(--accent-strong);
+}
+
 .provider--ready {
   background: rgba(41, 96, 92, 0.1);
   color: var(--accent-strong);
@@ -534,6 +542,22 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
   margin-top: 1rem;
+}
+
+.harness-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.harness-screenshot {
+  display: block;
+  width: 100%;
+  margin-top: 1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(84, 51, 20, 0.12);
+  background: rgba(255, 251, 244, 0.84);
 }
 
 .finding,
@@ -625,6 +649,7 @@
   .topbar,
   .hero,
   .grid,
+  .panel--harness-runtime,
   .panel--bridge,
   .panel--findings,
   .panel--harnesses {

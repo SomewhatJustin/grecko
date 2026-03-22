@@ -1,5 +1,14 @@
 import http from 'node:http'
 import { checkBridge, getBridgeSession, startBridge, stopBridge } from './bridge-store.js'
+import {
+  attachHarness,
+  clickHarness,
+  getHarnessSession,
+  pressHarness,
+  refreshHarness,
+  stopHarness,
+  typeHarness,
+} from './harness-store.js'
 import { createRun, executeRun, listRuns, syncRunExecution } from './runs-store.js'
 import { getRunnerSession, startRunner, stopRunner } from './runner-store.js'
 
@@ -114,6 +123,81 @@ const server = http.createServer(async (request, response) => {
     } catch (error) {
       sendJson(response, 400, {
         error: error instanceof Error ? error.message : 'Could not sync run execution.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/harness' && request.method === 'GET') {
+    sendJson(response, 200, { session: getHarnessSession() })
+    return
+  }
+
+  if (request.url === '/api/harness/attach' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { session: await attachHarness(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not attach browser harness.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/harness/refresh' && request.method === 'POST') {
+    try {
+      sendJson(response, 200, { session: await refreshHarness() })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not refresh browser harness.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/harness/click' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { session: await clickHarness(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not click app control.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/harness/type' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { session: await typeHarness(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not type into app field.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/harness/press' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { session: await pressHarness(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not send key to app.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/harness/stop' && request.method === 'POST') {
+    try {
+      sendJson(response, 200, { session: await stopHarness() })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not stop browser harness.',
       })
     }
     return

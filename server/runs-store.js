@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { computeIntakeVerdict, resolveRelease } from './release-resolver.js'
 import { checkBridge, getBridgeSession } from './bridge-store.js'
+import { attachHarness, getHarnessSession } from './harness-store.js'
 import { getRunnerSession, startRunner } from './runner-store.js'
 
 const dataDir = path.join(process.cwd(), '.grecko-data', 'runs')
@@ -23,7 +24,7 @@ function readRun(runId) {
     return null
   }
 
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  return hydrateRun(JSON.parse(fs.readFileSync(filePath, 'utf8')))
 }
 
 function writeRun(run) {
@@ -110,6 +111,47 @@ function summarizeBridgeState(bridgeSession) {
   }
 }
 
+function summarizeHarnessState(harnessSession) {
+  if (!harnessSession) {
+    return {
+      stage: 'pending',
+      reasonCodes: ['HARNESS_NOT_ATTACHED'],
+      summary: 'Grecko has not attached the no-integration browser harness yet.',
+    }
+  }
+
+  if (harnessSession.status === 'failed') {
+    return {
+      stage: 'failed',
+      reasonCodes: ['HARNESS_FAILED'],
+      summary: 'Grecko could not attach the no-integration browser harness.',
+    }
+  }
+
+  if (
+    harnessSession.status === 'attached' &&
+    (harnessSession.buttons.length > 0 ||
+      harnessSession.fields.length > 0 ||
+      harnessSession.bodyTextExcerpt)
+  ) {
+    return {
+      stage: 'completed',
+      reasonCodes:
+        harnessSession.interactionCount > 0
+          ? ['HARNESS_USED']
+          : ['HARNESS_ATTACHED'],
+      summary:
+        'Grecko attached the no-integration browser harness and can inspect or use the app surface.',
+    }
+  }
+
+  return {
+    stage: 'pending',
+    reasonCodes: ['HARNESS_PENDING'],
+    summary: 'Grecko has not verified that the no-integration browser harness can use the app yet.',
+  }
+}
+
 export function computeRunVerdict(run) {
   const intakeVerdict = computeIntakeVerdict(run.release)
 
@@ -118,6 +160,7 @@ export function computeRunVerdict(run) {
   }
 
   const launch = summarizeRunnerState(run.execution?.runner ?? null)
+  const harness = summarizeHarnessState(run.execution?.harness ?? null)
   const bridge = summarizeBridgeState(run.execution?.bridge ?? null)
 
   if (launch.stage === 'failed') {
@@ -137,6 +180,15 @@ export function computeRunVerdict(run) {
     }
   }
 
+  if (harness.stage === 'completed') {
+    return {
+      label: 'ship',
+      reasonCodes: ['INTAKE_READY', ...launch.reasonCodes, ...harness.reasonCodes],
+      summary:
+        'Grecko resolved the release, launched the target app, and exercised the no-integration browser harness.',
+    }
+  }
+
   if (bridge.stage === 'completed') {
     return {
       label: 'ship',
@@ -148,19 +200,26 @@ export function computeRunVerdict(run) {
 
   return {
     label: 'investigate',
-    reasonCodes: ['INTAKE_READY', ...launch.reasonCodes, ...bridge.reasonCodes],
+    reasonCodes: [
+      'INTAKE_READY',
+      ...launch.reasonCodes,
+      ...harness.reasonCodes,
+      ...bridge.reasonCodes,
+    ],
     summary:
-      'Grecko resolved the release and captured launch evidence, but the bridge layer still needs attention before this run can clear to ship.',
+      'Grecko resolved the release and captured launch evidence, but it still needs either browser-harness evidence or a bridge session before this run can clear to ship.',
   }
 }
 
 function computeStages(execution) {
   const launch = summarizeRunnerState(execution?.runner ?? null)
+  const harness = summarizeHarnessState(execution?.harness ?? null)
   const bridge = summarizeBridgeState(execution?.bridge ?? null)
 
   return {
     intake: 'completed',
     launch: launch.stage,
+    harness: harness.stage,
     bridge: bridge.stage,
   }
 }
@@ -177,13 +236,29 @@ export function applyExecutionEvidence(run, execution) {
   return nextRun
 }
 
+function hydrateRun(run) {
+  const hydrated = {
+    ...run,
+    execution: run.execution
+      ? {
+          ...run.execution,
+          harness: run.execution.harness ?? null,
+        }
+      : null,
+  }
+
+  hydrated.stages = computeStages(hydrated.execution)
+  hydrated.verdict = computeRunVerdict(hydrated)
+  return hydrated
+}
+
 export function listRuns() {
   ensureDataDir()
   return fs
     .readdirSync(dataDir)
     .filter((entry) => entry.endsWith('.json'))
     .map((entry) =>
-      JSON.parse(fs.readFileSync(path.join(dataDir, entry), 'utf8')),
+      hydrateRun(JSON.parse(fs.readFileSync(path.join(dataDir, entry), 'utf8'))),
     )
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
 }
@@ -205,6 +280,7 @@ export async function createRun({ releaseUrl }) {
     stages: {
       intake: 'completed',
       launch: 'pending',
+      harness: 'pending',
       bridge: 'pending',
     },
   }
@@ -230,6 +306,7 @@ export function syncRunExecution({ runId }) {
   }
 
   const runner = getRunnerSession()
+  const harness = getHarnessSession() ?? run.execution.harness ?? null
   const bridge = checkBridge({
     cwd: run.execution.cwd,
     port: run.execution.port,
@@ -239,6 +316,7 @@ export function syncRunExecution({ runId }) {
     ...run.execution,
     lastSyncedAt: new Date().toISOString(),
     runner,
+    harness,
     bridge,
   })
 
@@ -257,6 +335,14 @@ export async function executeRun({ runId, command, cwd, port }) {
   await wait(EXECUTION_WAIT_MS)
 
   const runner = getRunnerSession() ?? startedRunner
+  let harness = null
+
+  try {
+    harness = await attachHarness({})
+  } catch {
+    harness = getHarnessSession()
+  }
+
   const bridge = checkBridge({ cwd, port })
   const previousBridge = getBridgeSession()
 
@@ -267,6 +353,7 @@ export async function executeRun({ runId, command, cwd, port }) {
     startedAt: new Date().toISOString(),
     lastSyncedAt: new Date().toISOString(),
     runner,
+    harness,
     bridge: bridge ?? previousBridge,
   })
 

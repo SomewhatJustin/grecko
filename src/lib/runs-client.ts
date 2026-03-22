@@ -39,6 +39,39 @@ export type RunBridgeSession = {
   logs: string[]
 }
 
+export type RunHarnessButton = {
+  index: number
+  text: string
+  ariaLabel: string
+  tagName: string
+}
+
+export type RunHarnessField = {
+  index: number
+  tagName: string
+  type: string
+  placeholder: string
+  ariaLabel: string
+  name: string
+  value: string
+}
+
+export type RunHarnessSession = {
+  id: string
+  status: 'attached' | 'failed' | 'stopped'
+  attachedAt: string
+  lastActionAt: string
+  currentUrl: string
+  targetUrl: string
+  title: string
+  interactionCount: number
+  buttons: RunHarnessButton[]
+  fields: RunHarnessField[]
+  bodyTextExcerpt: string
+  screenshotDataUrl: string | null
+  logs: string[]
+}
+
 export type RunRecord = {
   id: string
   createdAt: string
@@ -74,6 +107,7 @@ export type RunRecord = {
   stages: {
     intake: string
     launch: string
+    harness: string
     bridge: string
   }
   execution: {
@@ -83,6 +117,7 @@ export type RunRecord = {
     startedAt: string
     lastSyncedAt: string
     runner: RunRunnerSession | null
+    harness: RunHarnessSession | null
     bridge: RunBridgeSession | null
   } | null
 }

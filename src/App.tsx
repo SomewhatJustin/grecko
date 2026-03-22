@@ -13,6 +13,16 @@ import {
   type BridgeSession,
 } from './lib/bridge-client'
 import {
+  attachHarnessSession,
+  clickHarnessControl,
+  fetchHarnessSession,
+  pressHarnessKey,
+  refreshHarnessSession,
+  stopHarnessSession,
+  typeHarnessField,
+  type HarnessSession,
+} from './lib/harness-client'
+import {
   createRun as createRunRecord,
   executeRun as executeRunRecord,
   fetchRuns,
@@ -34,8 +44,14 @@ const launchPillars = [
       'Grecko now resolves public GitHub and GitLab releases into a persisted intake run with selected Linux and Android assets.',
   },
   {
-    eyebrow: 'Harness access',
-    title: 'Use the Tauri MCP bridge for deep app control',
+    eyebrow: 'No-integration mode',
+    title: 'Use the app through a browser harness first',
+    body:
+      'Grecko can now attach Chrome directly to the app URL discovered in runner logs, so it can click controls, type into fields, and inspect the live UI without any target-side plugin.',
+  },
+  {
+    eyebrow: 'Deep integration',
+    title: 'Keep the Tauri MCP bridge as an optional upgrade',
     body:
       'The Hypothesi MCP stack gives AI harnesses screenshots, DOM state, logs, IPC visibility, and device discovery once the target app installs the bridge plugin.',
   },
@@ -68,6 +84,13 @@ function formatBridgeStatus(session: BridgeSession | null) {
   return 'Bridge idle'
 }
 
+function formatHarnessStatus(session: HarnessSession | null) {
+  if (!session) return 'Harness idle'
+  if (session.status === 'attached') return 'Harness attached'
+  if (session.status === 'failed') return 'Harness failed'
+  return 'Harness stopped'
+}
+
 function formatStageStatus(stage: string) {
   if (stage === 'completed') return 'Completed'
   if (stage === 'running') return 'Running'
@@ -81,20 +104,31 @@ function App() {
   const runnerCommandId = useId()
   const runnerDirectoryId = useId()
   const bridgePortId = useId()
+  const harnessUrlId = useId()
+  const harnessTextId = useId()
+  const harnessKeyId = useId()
+  const harnessFieldId = useId()
 
   const [releaseUrl, setReleaseUrl] = useState(stonefruitReleaseUrl)
   const [runnerCommand, setRunnerCommand] = useState(defaultRunnerCommand)
   const [runnerDirectory, setRunnerDirectory] = useState(defaultRunnerDirectory)
   const [bridgePort, setBridgePort] = useState(defaultBridgePort)
+  const [harnessUrl, setHarnessUrl] = useState('')
+  const [harnessText, setHarnessText] = useState('Grecko QA note')
+  const [harnessKey, setHarnessKey] = useState('Enter')
+  const [selectedFieldIndex, setSelectedFieldIndex] = useState('0')
   const [runs, setRuns] = useState<RunRecord[]>([])
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [runBusy, setRunBusy] = useState(false)
   const [runError, setRunError] = useState('')
   const [runnerSession, setRunnerSession] = useState<RunnerSession | null>(null)
+  const [harnessSession, setHarnessSession] = useState<HarnessSession | null>(null)
   const [bridgeSession, setBridgeSession] = useState<BridgeSession | null>(null)
   const [runnerError, setRunnerError] = useState('')
+  const [harnessError, setHarnessError] = useState('')
   const [bridgeError, setBridgeError] = useState('')
   const [runnerBusy, setRunnerBusy] = useState(false)
+  const [harnessBusy, setHarnessBusy] = useState(false)
   const [bridgeBusy, setBridgeBusy] = useState(false)
 
   const intake = validateReleaseIntake(releaseUrl)
@@ -165,6 +199,40 @@ function App() {
     }
   }
 
+  async function refreshHarness(showErrors = true) {
+    try {
+      const session = await fetchHarnessSession()
+      setHarnessSession(session)
+      if (showErrors) {
+        setHarnessError('')
+      }
+    } catch (error) {
+      if (!showErrors) {
+        return
+      }
+
+      setHarnessError(
+        error instanceof Error ? error.message : 'Could not reach the browser harness API.',
+      )
+    }
+  }
+
+  async function syncActiveRunEvidence() {
+    if (!activeRun?.execution) {
+      return
+    }
+
+    const run = await syncRunRecord({ runId: activeRun.id })
+
+    if (!run) {
+      return
+    }
+
+    setRuns((currentRuns) =>
+      currentRuns.map((currentRun) => (currentRun.id === run.id ? run : currentRun)),
+    )
+  }
+
   useEffect(() => {
     void fetchRuns()
       .then((nextRuns) => {
@@ -205,6 +273,22 @@ function App() {
             : 'Could not reach the Grecko bridge API.',
         )
       })
+
+    void fetchHarnessSession()
+      .then((session) => {
+        setHarnessSession(session)
+        setHarnessError('')
+        if (session?.fields[0]) {
+          setSelectedFieldIndex(String(session.fields[0].index))
+        }
+      })
+      .catch((error) => {
+        setHarnessError(
+          error instanceof Error
+            ? error.message
+            : 'Could not reach the browser harness API.',
+        )
+      })
   }, [])
 
   useEffect(() => {
@@ -214,6 +298,7 @@ function App() {
 
     const intervalId = window.setInterval(() => {
       void refreshRunner(false)
+      void refreshHarness(false)
       void refreshBridge(false)
     }, 1_000)
 
@@ -247,6 +332,20 @@ function App() {
       window.clearInterval(intervalId)
     }
   }, [activeRun?.execution, activeRun?.id, runnerSession?.status])
+
+  useEffect(() => {
+    if (!harnessSession?.fields.length) {
+      return
+    }
+
+    if (
+      !harnessSession.fields.some(
+        (field) => String(field.index) === selectedFieldIndex,
+      )
+    ) {
+      setSelectedFieldIndex(String(harnessSession.fields[0].index))
+    }
+  }, [harnessSession?.fields, selectedFieldIndex])
 
   async function handleCreateRun(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -299,7 +398,7 @@ function App() {
       )
       setActiveRunId(run.id)
       setRunError('')
-      await Promise.all([refreshRunner(false), refreshBridge(false)])
+      await Promise.all([refreshRunner(false), refreshHarness(false), refreshBridge(false)])
     } catch (error) {
       setRunError(
         error instanceof Error ? error.message : 'Grecko could not execute that run.',
@@ -328,7 +427,7 @@ function App() {
         currentRuns.map((currentRun) => (currentRun.id === run.id ? run : currentRun)),
       )
       setRunError('')
-      await Promise.all([refreshRunner(false), refreshBridge(false)])
+      await Promise.all([refreshRunner(false), refreshHarness(false), refreshBridge(false)])
     } catch (error) {
       setRunError(
         error instanceof Error
@@ -373,6 +472,126 @@ function App() {
       )
     } finally {
       setRunnerBusy(false)
+    }
+  }
+
+  async function handleHarnessAttach() {
+    setHarnessBusy(true)
+
+    try {
+      const session = await attachHarnessSession({
+        url: harnessUrl.trim() || undefined,
+      })
+      setHarnessSession(session)
+      if (session?.fields[0]) {
+        setSelectedFieldIndex(String(session.fields[0].index))
+      }
+      setHarnessError('')
+      await syncActiveRunEvidence()
+    } catch (error) {
+      setHarnessError(
+        error instanceof Error
+          ? error.message
+          : 'Grecko could not attach the no-integration browser harness.',
+      )
+    } finally {
+      setHarnessBusy(false)
+    }
+  }
+
+  async function handleHarnessRefresh() {
+    setHarnessBusy(true)
+
+    try {
+      const session = await refreshHarnessSession()
+      setHarnessSession(session)
+      if (session?.fields[0]) {
+        setSelectedFieldIndex(String(session.fields[0].index))
+      }
+      setHarnessError('')
+      await syncActiveRunEvidence()
+    } catch (error) {
+      setHarnessError(
+        error instanceof Error
+          ? error.message
+          : 'Grecko could not refresh the browser harness snapshot.',
+      )
+    } finally {
+      setHarnessBusy(false)
+    }
+  }
+
+  async function handleHarnessClick(buttonIndex: number) {
+    setHarnessBusy(true)
+
+    try {
+      const session = await clickHarnessControl({ buttonIndex })
+      setHarnessSession(session)
+      if (session?.fields[0]) {
+        setSelectedFieldIndex(String(session.fields[0].index))
+      }
+      setHarnessError('')
+      await syncActiveRunEvidence()
+    } catch (error) {
+      setHarnessError(
+        error instanceof Error ? error.message : 'Grecko could not click that app control.',
+      )
+    } finally {
+      setHarnessBusy(false)
+    }
+  }
+
+  async function handleHarnessType() {
+    setHarnessBusy(true)
+
+    try {
+      const session = await typeHarnessField({
+        fieldIndex: Number(selectedFieldIndex),
+        text: harnessText,
+      })
+      setHarnessSession(session)
+      setHarnessError('')
+      await syncActiveRunEvidence()
+    } catch (error) {
+      setHarnessError(
+        error instanceof Error ? error.message : 'Grecko could not type into that field.',
+      )
+    } finally {
+      setHarnessBusy(false)
+    }
+  }
+
+  async function handleHarnessPress() {
+    setHarnessBusy(true)
+
+    try {
+      const session = await pressHarnessKey({ key: harnessKey })
+      setHarnessSession(session)
+      setHarnessError('')
+      await syncActiveRunEvidence()
+    } catch (error) {
+      setHarnessError(
+        error instanceof Error ? error.message : 'Grecko could not send that key press.',
+      )
+    } finally {
+      setHarnessBusy(false)
+    }
+  }
+
+  async function handleHarnessStop() {
+    setHarnessBusy(true)
+
+    try {
+      const session = await stopHarnessSession()
+      setHarnessSession(session)
+      setHarnessError('')
+      await syncActiveRunEvidence()
+    } catch (error) {
+      setHarnessError(
+        error instanceof Error ? error.message : 'Grecko could not stop the browser harness.',
+      )
+    } finally {
+      setHarnessBusy(false)
     }
   }
 
@@ -484,6 +703,7 @@ function App() {
         <nav className="topbar__nav" aria-label="Sections">
           <a href="#control-room">Control Room</a>
           <a href="#runner">Runner</a>
+          <a href="#harness">Harness</a>
           <a href="#bridge">Bridge</a>
           <a href="#dossier">Dossier</a>
           <a href="#harnesses">Harnesses</a>
@@ -622,7 +842,7 @@ function App() {
                     <strong>{run.release.releaseName}</strong>
                     <span>{run.verdict.label}</span>
                     <small>
-                      launch {run.stages.launch} · bridge {run.stages.bridge}
+                      launch {run.stages.launch} · browser {run.stages.harness}
                     </small>
                   </button>
                 ))
@@ -697,6 +917,10 @@ function App() {
                 <article className={`stage stage--${activeRun.stages.launch}`}>
                   <strong>Launch</strong>
                   <span>{formatStageStatus(activeRun.stages.launch)}</span>
+                </article>
+                <article className={`stage stage--${activeRun.stages.harness}`}>
+                  <strong>Browser</strong>
+                  <span>{formatStageStatus(activeRun.stages.harness)}</span>
                 </article>
                 <article className={`stage stage--${activeRun.stages.bridge}`}>
                   <strong>Bridge</strong>
@@ -830,10 +1054,224 @@ function App() {
           </div>
         </section>
 
+        <section className="panel panel--harness-runtime" id="harness">
+          <div className="panel__header">
+            <p className="eyebrow">No-Integration Harness</p>
+            <h2>Use the app even when it has no MCP plugin</h2>
+          </div>
+
+          <div className="runner-grid">
+            <form
+              className="runner-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void handleHarnessAttach()
+              }}
+            >
+              <label className="field" htmlFor={harnessUrlId}>
+                <span>Target URL override</span>
+                <input
+                  id={harnessUrlId}
+                  name="harness-url"
+                  type="text"
+                  value={harnessUrl}
+                  onChange={(event) => setHarnessUrl(event.target.value)}
+                  placeholder={harnessSession?.targetUrl ?? 'Auto-detect from runner logs'}
+                />
+              </label>
+
+              <div className="runner-actions">
+                <button
+                  className="button"
+                  type="submit"
+                  disabled={harnessBusy}
+                >
+                  {harnessBusy ? 'Working...' : 'Attach harness'}
+                </button>
+                <button
+                  className="button button--muted"
+                  type="button"
+                  disabled={harnessBusy}
+                  onClick={() => void handleHarnessRefresh()}
+                >
+                  Refresh harness
+                </button>
+                <button
+                  className="button button--muted"
+                  type="button"
+                  disabled={harnessBusy || !harnessSession}
+                  onClick={() => void handleHarnessStop()}
+                >
+                  Stop harness
+                </button>
+              </div>
+
+              <p className="helper">
+                Grecko reads the launched app URL from runner logs, opens a real
+                browser session, and treats that page as the no-integration app
+                harness.
+              </p>
+
+              <label className="field" htmlFor={harnessFieldId}>
+                <span>Type into discovered field</span>
+                <select
+                  id={harnessFieldId}
+                  value={selectedFieldIndex}
+                  onChange={(event) => setSelectedFieldIndex(event.target.value)}
+                  disabled={harnessBusy || !harnessSession?.fields.length}
+                >
+                  {harnessSession?.fields.length ? (
+                    harnessSession.fields.map((field) => (
+                      <option key={field.index} value={field.index}>
+                        {field.tagName}
+                        {field.placeholder ? ` · ${field.placeholder}` : ''}
+                        {field.ariaLabel ? ` · ${field.ariaLabel}` : ''}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="0">No fields discovered yet</option>
+                  )}
+                </select>
+              </label>
+
+              <label className="field" htmlFor={harnessTextId}>
+                <span>Text payload</span>
+                <input
+                  id={harnessTextId}
+                  name="harness-text"
+                  type="text"
+                  value={harnessText}
+                  onChange={(event) => setHarnessText(event.target.value)}
+                  placeholder="Grecko QA note"
+                />
+              </label>
+
+              <div className="runner-actions">
+                <button
+                  className="button"
+                  type="button"
+                  disabled={harnessBusy || !harnessSession?.fields.length}
+                  onClick={() => void handleHarnessType()}
+                >
+                  Type into field
+                </button>
+              </div>
+
+              <label className="field" htmlFor={harnessKeyId}>
+                <span>Keyboard key</span>
+                <input
+                  id={harnessKeyId}
+                  name="harness-key"
+                  type="text"
+                  value={harnessKey}
+                  onChange={(event) => setHarnessKey(event.target.value)}
+                  placeholder="Enter"
+                />
+              </label>
+
+              <div className="runner-actions">
+                <button
+                  className="button button--muted"
+                  type="button"
+                  disabled={harnessBusy || !harnessSession}
+                  onClick={() => void handleHarnessPress()}
+                >
+                  Press key
+                </button>
+              </div>
+
+              {harnessError ? (
+                <p className="runner-error" role="alert">
+                  {harnessError}
+                </p>
+              ) : null}
+            </form>
+
+            <article className="runner-card">
+              <div className="runner-status">
+                <span
+                  className={`provider provider--${
+                    harnessSession?.status ?? 'idle'
+                  }`}
+                >
+                  {formatHarnessStatus(harnessSession)}
+                </span>
+                <p>
+                  {harnessSession
+                    ? harnessSession.bodyTextExcerpt ||
+                      'Grecko attached the browser harness and is ready to use the app.'
+                    : 'No harness session yet. Launch the app, then attach the browser harness.'}
+                </p>
+              </div>
+
+              <dl className="facts facts--runner">
+                <div>
+                  <dt>Target</dt>
+                  <dd>{harnessSession?.targetUrl ?? 'Not attached'}</dd>
+                </div>
+                <div>
+                  <dt>Title</dt>
+                  <dd>{harnessSession?.title ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt>Buttons</dt>
+                  <dd>{harnessSession?.buttons.length ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>Fields</dt>
+                  <dd>{harnessSession?.fields.length ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>Actions</dt>
+                  <dd>{harnessSession?.interactionCount ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>Current URL</dt>
+                  <dd>{harnessSession?.currentUrl ?? '—'}</dd>
+                </div>
+              </dl>
+
+              <div className="harness-controls">
+                {harnessSession?.buttons.length ? (
+                  harnessSession.buttons.slice(0, 8).map((button) => (
+                    <button
+                      key={button.index}
+                      className="button button--muted"
+                      type="button"
+                      disabled={harnessBusy}
+                      onClick={() => void handleHarnessClick(button.index)}
+                    >
+                      {button.text}
+                    </button>
+                  ))
+                ) : (
+                  <p className="helper">
+                    No clickable controls discovered yet. Refresh the harness
+                    after the app finishes loading.
+                  </p>
+                )}
+              </div>
+
+              {harnessSession?.screenshotDataUrl ? (
+                <img
+                  className="harness-screenshot"
+                  src={harnessSession.screenshotDataUrl}
+                  alt="Live app harness snapshot"
+                />
+              ) : null}
+
+              <pre className="runner-log">
+                {harnessSession?.logs.join('\n') ||
+                  'No browser harness logs yet.'}
+              </pre>
+            </article>
+          </div>
+        </section>
+
         <section className="panel panel--bridge" id="bridge">
           <div className="panel__header">
             <p className="eyebrow">MCP bridge</p>
-            <h2>Inspect Tauri bridge readiness and driver sessions</h2>
+            <h2>Inspect optional deep Tauri bridge readiness</h2>
           </div>
 
           <div className="runner-grid">
@@ -980,6 +1418,24 @@ function App() {
                       {activeRun.execution.runner
                         ? `${formatRunnerStatus(activeRun.execution.runner)} with PID ${activeRun.execution.runner.pid ?? 'unknown'}.`
                         : 'No runner evidence has been recorded yet.'}
+                    </p>
+                  </article>
+
+                  <article className="finding">
+                    <div className="finding__meta">
+                      <span>WEB</span>
+                      <span>{activeRun.stages.harness}</span>
+                    </div>
+                    <h3>No-integration harness</h3>
+                    <p>
+                      {activeRun.execution.harness?.title
+                        ? `${activeRun.execution.harness.title} via ${activeRun.execution.harness.currentUrl}`
+                        : 'No browser-harness evidence has been recorded yet.'}
+                    </p>
+                    <p>
+                      {activeRun.execution.harness
+                        ? `${activeRun.execution.harness.buttons.length} controls, ${activeRun.execution.harness.fields.length} fields, ${activeRun.execution.harness.interactionCount} actions.`
+                        : 'Attach the browser harness to use the app without any target-side plugin.'}
                     </p>
                   </article>
 

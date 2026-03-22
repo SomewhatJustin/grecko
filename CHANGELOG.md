@@ -3,6 +3,22 @@
 All notable changes to this project are documented in this file.
 This project uses a four-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.4.0] - 2026-03-22
+
+### Added
+
+- A no-integration browser harness backed by Chrome and `puppeteer-core`.
+- Harness APIs and UI controls for attaching to the app URL, clicking controls,
+  typing into fields, sending keys, and capturing screenshots.
+- Server-side tests for local app URL detection in the harness layer.
+
+### Changed
+
+- Run verdicts can now clear to `ship` from launch plus browser-harness evidence,
+  even when the target app has no MCP bridge plugin.
+- Stonefruit is now verified as a usable target through Grecko’s no-integration
+  harness path.
+
 ## [0.1.3.0] - 2026-03-22
 
 ### Added
