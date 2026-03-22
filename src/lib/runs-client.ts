@@ -58,6 +58,7 @@ export type RunHarnessField = {
 
 export type RunHarnessSession = {
   id: string
+  mode?: 'browser' | 'android'
   status: 'attached' | 'failed' | 'stopped'
   attachedAt: string
   lastActionAt: string
@@ -69,6 +70,22 @@ export type RunHarnessSession = {
   fields: RunHarnessField[]
   bodyTextExcerpt: string
   screenshotDataUrl: string | null
+  logs: string[]
+  deviceSerial?: string
+  packageName?: string
+}
+
+export type RunAndroidExecution = {
+  serial: string
+  packageName: string
+  activityName: string
+  status: 'running' | 'stopped' | 'failed' | 'completed'
+  installedApkPath: string
+  installOutput: string
+  launchedAt: string
+  checkedAt: string
+  pid: string | null
+  focused: boolean
   logs: string[]
 }
 
@@ -111,12 +128,14 @@ export type RunRecord = {
     bridge: string
   }
   execution: {
+    target?: 'desktop' | 'android'
     command: string
     cwd: string
     port: number
     startedAt: string
     lastSyncedAt: string
     runner: RunRunnerSession | null
+    android?: RunAndroidExecution | null
     harness: RunHarnessSession | null
     bridge: RunBridgeSession | null
   } | null
@@ -159,9 +178,13 @@ export async function createRun(input: { releaseUrl: string }) {
 
 export async function executeRun(input: {
   runId: string
-  command: string
-  cwd: string
-  port: number
+  command?: string
+  cwd?: string
+  port?: number
+  target?: 'desktop' | 'android'
+  serial?: string
+  packageName?: string
+  activityName?: string
 }) {
   const response = await fetch('/api/runs/execute', {
     method: 'POST',

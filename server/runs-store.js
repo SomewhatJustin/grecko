@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { computeIntakeVerdict, resolveRelease } from './release-resolver.js'
+import { inspectAndroidApp, installAndroidApk, launchAndroidApp } from './android-store.js'
 import { checkBridge, getBridgeSession } from './bridge-store.js'
 import { attachHarness, getHarnessSession } from './harness-store.js'
 import { getRunnerSession, startRunner } from './runner-store.js'
@@ -38,7 +39,33 @@ function wait(ms) {
   })
 }
 
-function summarizeRunnerState(runnerSession) {
+function summarizeLaunchState(execution) {
+  if (execution?.android) {
+    if (execution.android.status === 'failed') {
+      return {
+        stage: 'failed',
+        reasonCodes: ['LAUNCH_FAILED'],
+        summary: 'Grecko installed or launched the Android target, but the run failed.',
+      }
+    }
+
+    if (execution.android.status === 'running') {
+      return {
+        stage: 'running',
+        reasonCodes: ['LAUNCH_RUNNING'],
+        summary: 'Grecko installed the Android artifact and the app is running on the target.',
+      }
+    }
+
+    return {
+      stage: 'completed',
+      reasonCodes: ['LAUNCH_COMPLETED'],
+      summary: 'Grecko installed and launched the Android target and captured exit evidence.',
+    }
+  }
+
+  const runnerSession = execution?.runner ?? null
+
   if (!runnerSession) {
     return {
       stage: 'pending',
@@ -116,7 +143,7 @@ function summarizeHarnessState(harnessSession) {
     return {
       stage: 'pending',
       reasonCodes: ['HARNESS_NOT_ATTACHED'],
-      summary: 'Grecko has not attached the no-integration browser harness yet.',
+      summary: 'Grecko has not attached the no-integration harness yet.',
     }
   }
 
@@ -124,7 +151,7 @@ function summarizeHarnessState(harnessSession) {
     return {
       stage: 'failed',
       reasonCodes: ['HARNESS_FAILED'],
-      summary: 'Grecko could not attach the no-integration browser harness.',
+      summary: 'Grecko could not attach the no-integration harness.',
     }
   }
 
@@ -141,14 +168,14 @@ function summarizeHarnessState(harnessSession) {
           ? ['HARNESS_USED']
           : ['HARNESS_ATTACHED'],
       summary:
-        'Grecko attached the no-integration browser harness and can inspect or use the app surface.',
+        'Grecko attached the no-integration harness and can inspect or use the app surface.',
     }
   }
 
   return {
     stage: 'pending',
     reasonCodes: ['HARNESS_PENDING'],
-    summary: 'Grecko has not verified that the no-integration browser harness can use the app yet.',
+    summary: 'Grecko has not verified that the no-integration harness can use the app yet.',
   }
 }
 
@@ -159,7 +186,7 @@ export function computeRunVerdict(run) {
     return intakeVerdict
   }
 
-  const launch = summarizeRunnerState(run.execution?.runner ?? null)
+  const launch = summarizeLaunchState(run.execution ?? null)
   const harness = summarizeHarnessState(run.execution?.harness ?? null)
   const bridge = summarizeBridgeState(run.execution?.bridge ?? null)
 
@@ -185,7 +212,7 @@ export function computeRunVerdict(run) {
       label: 'ship',
       reasonCodes: ['INTAKE_READY', ...launch.reasonCodes, ...harness.reasonCodes],
       summary:
-        'Grecko resolved the release, launched the target app, and exercised the no-integration browser harness.',
+        'Grecko resolved the release, launched the target app, and exercised the no-integration harness.',
     }
   }
 
@@ -207,12 +234,12 @@ export function computeRunVerdict(run) {
       ...bridge.reasonCodes,
     ],
     summary:
-      'Grecko resolved the release and captured launch evidence, but it still needs either browser-harness evidence or a bridge session before this run can clear to ship.',
+      'Grecko resolved the release and captured launch evidence, but it still needs either no-integration harness evidence or a bridge session before this run can clear to ship.',
   }
 }
 
 function computeStages(execution) {
-  const launch = summarizeRunnerState(execution?.runner ?? null)
+  const launch = summarizeLaunchState(execution ?? null)
   const harness = summarizeHarnessState(execution?.harness ?? null)
   const bridge = summarizeBridgeState(execution?.bridge ?? null)
 
@@ -227,7 +254,10 @@ function computeStages(execution) {
 export function applyExecutionEvidence(run, execution) {
   const nextRun = {
     ...run,
-    status: execution?.runner?.status === 'failed' ? 'attention' : 'executed',
+    status:
+      execution?.runner?.status === 'failed' || execution?.android?.status === 'failed'
+        ? 'attention'
+        : 'executed',
     execution,
   }
 
@@ -242,6 +272,9 @@ function hydrateRun(run) {
     execution: run.execution
       ? {
           ...run.execution,
+          target:
+            run.execution.target ?? (run.execution.android ? 'android' : 'desktop'),
+          android: run.execution.android ?? null,
           harness: run.execution.harness ?? null,
         }
       : null,
@@ -305,17 +338,43 @@ export function syncRunExecution({ runId }) {
     throw new Error('This run has not been executed yet.')
   }
 
-  const runner = getRunnerSession()
   const harness = getHarnessSession() ?? run.execution.harness ?? null
-  const bridge = checkBridge({
-    cwd: run.execution.cwd,
-    port: run.execution.port,
-  })
+  const isAndroidRun = run.execution.target === 'android' || Boolean(run.execution.android)
+  const runner = isAndroidRun ? run.execution.runner ?? null : getRunnerSession()
+  const bridge = isAndroidRun
+    ? run.execution.bridge ?? null
+    : checkBridge({
+        cwd: run.execution.cwd,
+        port: run.execution.port,
+      })
+  const android = isAndroidRun
+    ? (() => {
+        const previous = run.execution.android
+
+        if (!previous) {
+          return null
+        }
+
+        const state = inspectAndroidApp({
+          serial: previous.serial,
+          packageName: previous.packageName,
+        })
+
+        return {
+          ...previous,
+          pid: state.pid,
+          focused: state.focused,
+          checkedAt: new Date().toISOString(),
+          status: state.running ? 'running' : 'stopped',
+        }
+      })()
+    : run.execution.android ?? null
 
   const nextRun = applyExecutionEvidence(run, {
     ...run.execution,
     lastSyncedAt: new Date().toISOString(),
     runner,
+    android,
     harness,
     bridge,
   })
@@ -324,11 +383,82 @@ export function syncRunExecution({ runId }) {
   return nextRun
 }
 
-export async function executeRun({ runId, command, cwd, port }) {
+export async function executeRun({
+  runId,
+  command,
+  cwd,
+  port,
+  target,
+  serial,
+  packageName,
+  activityName,
+}) {
   const run = readRun(runId)
 
   if (!run) {
     throw new Error('Grecko could not find that run.')
+  }
+
+  if (target === 'android') {
+    const apkUrl = run.release.selectedAssets?.android?.url
+
+    if (!apkUrl) {
+      throw new Error('This run does not have a resolved Android APK asset yet.')
+    }
+
+    const install = await installAndroidApk({
+      serial,
+      apkUrl,
+    })
+    const launch = launchAndroidApp({
+      serial: install.serial,
+      packageName,
+      activityName,
+    })
+
+    let harness = null
+
+    try {
+      harness = await attachHarness({
+        mode: 'android',
+        serial: launch.serial,
+        packageName: launch.packageName,
+      })
+    } catch {
+      harness = getHarnessSession()
+    }
+
+    const now = new Date().toISOString()
+    const nextRun = applyExecutionEvidence(run, {
+      target: 'android',
+      command: `adb install -r ${path.basename(install.apkPath)} && am start -n ${launch.activityName}`,
+      cwd: `android://${launch.serial}`,
+      port: port ?? 0,
+      startedAt: now,
+      lastSyncedAt: now,
+      runner: null,
+      android: {
+        serial: launch.serial,
+        packageName: launch.packageName,
+        activityName: launch.activityName,
+        status: 'running',
+        installedApkPath: install.apkPath,
+        installOutput: install.output,
+        launchedAt: now,
+        checkedAt: now,
+        pid: null,
+        focused: true,
+        logs: [
+          `[system] Installed APK ${path.basename(install.apkPath)} on ${launch.serial}.`,
+          `[system] Launched ${launch.packageName} via ${launch.activityName}.`,
+        ],
+      },
+      harness,
+      bridge: null,
+    })
+
+    writeRun(nextRun)
+    return nextRun
   }
 
   const startedRunner = startRunner({ command, cwd })
@@ -347,12 +477,14 @@ export async function executeRun({ runId, command, cwd, port }) {
   const previousBridge = getBridgeSession()
 
   const nextRun = applyExecutionEvidence(run, {
+    target: 'desktop',
     command,
     cwd,
     port,
     startedAt: new Date().toISOString(),
     lastSyncedAt: new Date().toISOString(),
     runner,
+    android: null,
     harness,
     bridge: bridge ?? previousBridge,
   })

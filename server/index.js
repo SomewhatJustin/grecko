@@ -1,9 +1,16 @@
 import http from 'node:http'
+import {
+  installAndroidApk,
+  launchAndroidApp,
+  listAndroidDevices,
+  stopAndroidApp,
+} from './android-store.js'
 import { checkBridge, getBridgeSession, startBridge, stopBridge } from './bridge-store.js'
 import {
   attachHarness,
   clickHarness,
   getHarnessSession,
+  listHarnessAndroidDevices,
   pressHarness,
   refreshHarness,
   stopHarness,
@@ -133,6 +140,18 @@ const server = http.createServer(async (request, response) => {
     return
   }
 
+  if (request.url === '/api/harness/android/devices' && request.method === 'GET') {
+    try {
+      sendJson(response, 200, { devices: listHarnessAndroidDevices() })
+    } catch (error) {
+      sendJson(response, 400, {
+        error:
+          error instanceof Error ? error.message : 'Could not inspect Android targets.',
+      })
+    }
+    return
+  }
+
   if (request.url === '/api/harness/attach' && request.method === 'POST') {
     try {
       const payload = await readJson(request)
@@ -198,6 +217,54 @@ const server = http.createServer(async (request, response) => {
     } catch (error) {
       sendJson(response, 400, {
         error: error instanceof Error ? error.message : 'Could not stop browser harness.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/android/devices' && request.method === 'GET') {
+    try {
+      sendJson(response, 200, { devices: listAndroidDevices() })
+    } catch (error) {
+      sendJson(response, 400, {
+        error:
+          error instanceof Error ? error.message : 'Could not inspect Android targets.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/android/install' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { install: await installAndroidApk(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not install Android APK.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/android/launch' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { launch: launchAndroidApp(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not launch Android app.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/android/stop' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { launch: stopAndroidApp(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not stop Android app.',
       })
     }
     return

@@ -1,6 +1,16 @@
 import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import puppeteer from 'puppeteer-core'
+import {
+  attachAndroidHarness,
+  clickAndroidHarness,
+  getAndroidHarnessSession,
+  listAndroidDevices,
+  pressAndroidHarness,
+  refreshAndroidHarness,
+  stopAndroidHarness,
+  typeAndroidHarness,
+} from './android-store.js'
 import { getRunnerSession } from './runner-store.js'
 
 const LOG_LIMIT = 80
@@ -20,7 +30,7 @@ const COMMON_BROWSER_PATHS = [
   '/usr/bin/chromium-browser',
 ].filter(Boolean)
 
-let currentHarnessSession = null
+let currentBrowserSession = null
 
 function appendLog(session, stream, message) {
   const lines = message
@@ -47,13 +57,14 @@ function wait(ms) {
   })
 }
 
-function serializeHarnessSession(session) {
+function serializeBrowserSession(session) {
   if (!session) {
     return null
   }
 
   return {
     id: session.id,
+    mode: 'browser',
     status: session.status,
     attachedAt: session.attachedAt,
     lastActionAt: session.lastActionAt,
@@ -76,10 +87,17 @@ function resolveBrowserBinary() {
     }
   }
 
-  const which = spawnSync('bash', ['-lc', 'which google-chrome-stable google-chrome chromium chromium-browser 2>/dev/null | head -n 1'], {
-    encoding: 'utf8',
-    stdio: 'pipe',
-  })
+  const which = spawnSync(
+    'bash',
+    [
+      '-lc',
+      'which google-chrome-stable google-chrome chromium chromium-browser 2>/dev/null | head -n 1',
+    ],
+    {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    },
+  )
   const binary = which.stdout.trim()
 
   if (binary) {
@@ -121,7 +139,11 @@ async function captureSnapshot(page, includeScreenshot) {
         return Array.from(document.querySelectorAll(buttonSelector))
           .map((node, index) => ({
             index,
-            text: toText(node) || node.getAttribute('aria-label') || node.getAttribute('title') || `control-${index + 1}`,
+            text:
+              toText(node) ||
+              node.getAttribute('aria-label') ||
+              node.getAttribute('title') ||
+              `control-${index + 1}`,
             ariaLabel: node.getAttribute('aria-label') || '',
             tagName: node.tagName.toLowerCase(),
           }))
@@ -149,7 +171,10 @@ async function captureSnapshot(page, includeScreenshot) {
       return {
         currentUrl: window.location.href,
         title: document.title,
-        bodyTextExcerpt: (document.body?.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 700),
+        bodyTextExcerpt: (document.body?.innerText ?? '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 700),
         buttons: summarizeButtons(),
         fields: summarizeFields(),
       }
@@ -189,33 +214,60 @@ function applySnapshot(session, snapshot) {
   }
 }
 
-async function updateHarnessSnapshot(session, includeScreenshot = false) {
+async function updateBrowserSnapshot(session, includeScreenshot = false) {
   const snapshot = await captureSnapshot(session.page, includeScreenshot)
   applySnapshot(session, snapshot)
   session.lastActionAt = new Date().toISOString()
-  return serializeHarnessSession(session)
+  return serializeBrowserSession(session)
 }
 
-async function closeHarnessBrowser() {
-  if (!currentHarnessSession?.browser) {
-    currentHarnessSession = null
+async function closeBrowserHarness() {
+  if (!currentBrowserSession?.browser) {
+    currentBrowserSession = null
     return
   }
 
   try {
-    await currentHarnessSession.browser.close()
+    await currentBrowserSession.browser.close()
   } catch {
     // Best effort cleanup for dev use.
   }
 
-  currentHarnessSession = null
+  currentBrowserSession = null
+}
+
+function getActiveMode() {
+  if (currentBrowserSession) {
+    return 'browser'
+  }
+
+  if (getAndroidHarnessSession()) {
+    return 'android'
+  }
+
+  return null
 }
 
 export function getHarnessSession() {
-  return serializeHarnessSession(currentHarnessSession)
+  if (currentBrowserSession) {
+    return serializeBrowserSession(currentBrowserSession)
+  }
+
+  return getAndroidHarnessSession()
+}
+
+export function listHarnessAndroidDevices() {
+  return listAndroidDevices()
 }
 
 export async function attachHarness(payload = {}) {
+  const mode = payload.mode === 'android' ? 'android' : 'browser'
+
+  if (mode === 'android') {
+    await closeBrowserHarness()
+    return attachAndroidHarness(payload)
+  }
+
   const targetUrl = payload.url?.trim() || detectHarnessTargetUrl()
 
   if (!targetUrl) {
@@ -224,7 +276,8 @@ export async function attachHarness(payload = {}) {
     )
   }
 
-  await closeHarnessBrowser()
+  await stopAndroidHarness()
+  await closeBrowserHarness()
 
   const browser = await puppeteer.launch({
     executablePath: resolveBrowserBinary(),
@@ -238,6 +291,7 @@ export async function attachHarness(payload = {}) {
     id: String(Date.now()),
     browser,
     page,
+    mode: 'browser',
     status: 'attached',
     attachedAt: new Date().toISOString(),
     lastActionAt: new Date().toISOString(),
@@ -259,10 +313,14 @@ export async function attachHarness(payload = {}) {
     appendLog(session, 'pageerror', error.message)
   })
   page.on('requestfailed', (request) => {
-    appendLog(session, 'requestfailed', `${request.failure()?.errorText ?? 'Request failed'} ${request.url()}`)
+    appendLog(
+      session,
+      'requestfailed',
+      `${request.failure()?.errorText ?? 'Request failed'} ${request.url()}`,
+    )
   })
 
-  currentHarnessSession = session
+  currentBrowserSession = session
   appendLog(session, 'system', `Launching no-integration browser harness for ${targetUrl}`)
 
   try {
@@ -271,7 +329,7 @@ export async function attachHarness(payload = {}) {
       timeout: 15_000,
     })
     await wait(1_500)
-    await updateHarnessSnapshot(session, true)
+    await updateBrowserSnapshot(session, true)
   } catch (error) {
     session.status = 'failed'
     appendLog(
@@ -286,19 +344,31 @@ export async function attachHarness(payload = {}) {
     )
   }
 
-  return serializeHarnessSession(session)
+  return serializeBrowserSession(session)
 }
 
 export async function refreshHarness() {
-  if (!currentHarnessSession?.page) {
+  const mode = getActiveMode()
+
+  if (mode === 'android') {
+    return refreshAndroidHarness()
+  }
+
+  if (!currentBrowserSession?.page) {
     return null
   }
 
-  return updateHarnessSnapshot(currentHarnessSession, true)
+  return updateBrowserSnapshot(currentBrowserSession, true)
 }
 
 export async function clickHarness(payload = {}) {
-  if (!currentHarnessSession?.page) {
+  const mode = getActiveMode()
+
+  if (mode === 'android') {
+    return clickAndroidHarness(payload)
+  }
+
+  if (!currentBrowserSession?.page) {
     throw new Error('No browser harness session is active.')
   }
 
@@ -308,7 +378,7 @@ export async function clickHarness(payload = {}) {
     throw new Error('Choose a valid button from the discovered app controls.')
   }
 
-  const clicked = await currentHarnessSession.page.evaluate(
+  const clicked = await currentBrowserSession.page.evaluate(
     ({ buttonSelector, buttonIndex }) => {
       const controls = Array.from(document.querySelectorAll(buttonSelector))
       const element = controls[buttonIndex]
@@ -336,14 +406,20 @@ export async function clickHarness(payload = {}) {
     throw new Error('Grecko could not click that control in the browser harness.')
   }
 
-  currentHarnessSession.interactionCount += 1
-  appendLog(currentHarnessSession, 'system', `Clicked control: ${clicked}`)
+  currentBrowserSession.interactionCount += 1
+  appendLog(currentBrowserSession, 'system', `Clicked control: ${clicked}`)
   await wait(700)
-  return updateHarnessSnapshot(currentHarnessSession, true)
+  return updateBrowserSnapshot(currentBrowserSession, true)
 }
 
 export async function typeHarness(payload = {}) {
-  if (!currentHarnessSession?.page) {
+  const mode = getActiveMode()
+
+  if (mode === 'android') {
+    return typeAndroidHarness(payload)
+  }
+
+  if (!currentBrowserSession?.page) {
     throw new Error('No browser harness session is active.')
   }
 
@@ -355,7 +431,7 @@ export async function typeHarness(payload = {}) {
     throw new Error('Choose a valid field from the discovered app inputs.')
   }
 
-  await currentHarnessSession.page.evaluate(
+  await currentBrowserSession.page.evaluate(
     ({ fieldSelector, fieldIndex, text, clear }) => {
       const fields = Array.from(document.querySelectorAll(fieldSelector))
       const element = fields[fieldIndex]
@@ -386,14 +462,20 @@ export async function typeHarness(payload = {}) {
     },
   )
 
-  currentHarnessSession.interactionCount += 1
-  appendLog(currentHarnessSession, 'system', `Typed into field ${fieldIndex + 1}.`)
+  currentBrowserSession.interactionCount += 1
+  appendLog(currentBrowserSession, 'system', `Typed into field ${fieldIndex + 1}.`)
   await wait(500)
-  return updateHarnessSnapshot(currentHarnessSession, true)
+  return updateBrowserSnapshot(currentBrowserSession, true)
 }
 
 export async function pressHarness(payload = {}) {
-  if (!currentHarnessSession?.page) {
+  const mode = getActiveMode()
+
+  if (mode === 'android') {
+    return pressAndroidHarness(payload)
+  }
+
+  if (!currentBrowserSession?.page) {
     throw new Error('No browser harness session is active.')
   }
 
@@ -403,15 +485,21 @@ export async function pressHarness(payload = {}) {
     throw new Error('Provide a keyboard key for the browser harness to press.')
   }
 
-  await currentHarnessSession.page.keyboard.press(key)
-  currentHarnessSession.interactionCount += 1
-  appendLog(currentHarnessSession, 'system', `Pressed key: ${key}`)
+  await currentBrowserSession.page.keyboard.press(key)
+  currentBrowserSession.interactionCount += 1
+  appendLog(currentBrowserSession, 'system', `Pressed key: ${key}`)
   await wait(500)
-  return updateHarnessSnapshot(currentHarnessSession, true)
+  return updateBrowserSnapshot(currentBrowserSession, true)
 }
 
 export async function stopHarness() {
-  const session = currentHarnessSession
+  const mode = getActiveMode()
+
+  if (mode === 'android') {
+    return stopAndroidHarness()
+  }
+
+  const session = currentBrowserSession
 
   if (!session) {
     return null
@@ -419,8 +507,8 @@ export async function stopHarness() {
 
   session.status = 'stopped'
   appendLog(session, 'system', 'Stopping no-integration browser harness.')
-  const serialized = serializeHarnessSession(session)
-  await closeHarnessBrowser()
+  const serialized = serializeBrowserSession(session)
+  await closeBrowserHarness()
   return {
     ...serialized,
     status: 'stopped',
@@ -428,5 +516,6 @@ export async function stopHarness() {
 }
 
 export async function resetHarnessStateForTests() {
-  await closeHarnessBrowser()
+  await closeBrowserHarness()
+  await stopAndroidHarness()
 }

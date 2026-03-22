@@ -224,4 +224,53 @@ describe('computeRunVerdict', () => {
     expect(run.verdict.label).toBe('ship')
     expect(run.verdict.reasonCodes).toContain('HARNESS_USED')
   })
+
+  it('ships when an Android run launches and the Android harness can use the app', () => {
+    const run = applyExecutionEvidence(createBaseRun(), {
+      target: 'android',
+      command: 'adb install -r stonefruit.apk && am start -n com.futo.notes/.MainActivity',
+      cwd: 'android://emulator-5554',
+      port: 0,
+      startedAt: '2026-03-22T00:01:00.000Z',
+      lastSyncedAt: '2026-03-22T00:01:03.000Z',
+      runner: null,
+      android: {
+        serial: 'emulator-5554',
+        packageName: 'com.futo.notes',
+        activityName: 'com.futo.notes/.MainActivity',
+        status: 'running',
+        installedApkPath: '/tmp/stonefruit.apk',
+        installOutput: 'Success',
+        launchedAt: '2026-03-22T00:01:00.000Z',
+        checkedAt: '2026-03-22T00:01:03.000Z',
+        pid: '4242',
+        focused: true,
+        logs: [],
+      },
+      harness: {
+        id: 'harness-android-1',
+        mode: 'android',
+        status: 'attached',
+        attachedAt: '2026-03-22T00:01:01.000Z',
+        lastActionAt: '2026-03-22T00:01:03.000Z',
+        currentUrl: '',
+        targetUrl: 'emulator-5554',
+        title: 'com.futo.notes',
+        interactionCount: 2,
+        buttons: [{ index: 0, text: 'Quick capture', ariaLabel: '', tagName: 'button' }],
+        fields: [{ index: 0, tagName: 'edittext', type: 'text', placeholder: '', ariaLabel: '', name: '', value: 'GreckoAndroid' }],
+        bodyTextExcerpt: 'Stonefruit GreckoAndroid Android harness works',
+        screenshotDataUrl: null,
+        logs: [],
+        deviceSerial: 'emulator-5554',
+        packageName: 'com.futo.notes',
+      },
+      bridge: null,
+    })
+
+    expect(run.stages.launch).toBe('running')
+    expect(run.stages.harness).toBe('completed')
+    expect(run.verdict.label).toBe('ship')
+    expect(run.verdict.reasonCodes).toContain('HARNESS_USED')
+  })
 })

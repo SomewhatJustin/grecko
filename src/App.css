@@ -340,6 +340,7 @@
 }
 
 .panel--runner,
+.panel--android,
 .panel--harness-runtime,
 .panel--bridge,
 .panel--findings,
@@ -649,6 +650,7 @@
   .topbar,
   .hero,
   .grid,
+  .panel--android,
   .panel--harness-runtime,
   .panel--bridge,
   .panel--findings,

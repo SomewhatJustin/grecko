@@ -1,6 +1,13 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import './App.css'
 import {
+  fetchAndroidDevices,
+  installAndroidRelease,
+  launchAndroidTarget,
+  stopAndroidTarget,
+  type AndroidDevice,
+} from './lib/android-client'
+import {
   detectReleaseProvider,
   stonefruitReleaseUrl,
   validateReleaseIntake,
@@ -45,9 +52,9 @@ const launchPillars = [
   },
   {
     eyebrow: 'No-integration mode',
-    title: 'Use the app through a browser harness first',
+    title: 'Use the app through browser or Android harnesses first',
     body:
-      'Grecko can now attach Chrome directly to the app URL discovered in runner logs, so it can click controls, type into fields, and inspect the live UI without any target-side plugin.',
+      'Grecko can now attach Chrome directly to a local app URL or drive an Android device over adb, so it can click controls, type into fields, and inspect the live UI without any target-side plugin.',
   },
   {
     eyebrow: 'Deep integration',
@@ -66,6 +73,8 @@ const launchPillars = [
 const defaultRunnerCommand = 'npm run tauri:dev'
 const defaultRunnerDirectory = '/home/justin/Developer/stonefruit'
 const defaultBridgePort = '9223'
+const defaultAndroidPackage = 'com.futo.notes'
+const defaultAndroidActivity = 'com.futo.notes/.MainActivity'
 
 function formatRunnerStatus(session: RunnerSession | null) {
   if (!session) return 'Runner idle'
@@ -73,6 +82,17 @@ function formatRunnerStatus(session: RunnerSession | null) {
   if (session.status === 'stopped') return 'Stopped'
   if (session.status === 'failed') return 'Launch failed'
   return 'Exited cleanly'
+}
+
+function formatAndroidLaunchStatus(
+  execution: NonNullable<RunRecord['execution']>['android'] | null | undefined,
+) {
+  if (!execution) return 'No Android launch evidence has been recorded yet.'
+  if (execution.status === 'running') {
+    return `Android app running on ${execution.serial}${execution.pid ? ` with PID ${execution.pid}` : ''}.`
+  }
+  if (execution.status === 'failed') return 'Android launch failed.'
+  return `Android app launch completed on ${execution.serial}.`
 }
 
 function formatBridgeStatus(session: BridgeSession | null) {
@@ -86,7 +106,9 @@ function formatBridgeStatus(session: BridgeSession | null) {
 
 function formatHarnessStatus(session: HarnessSession | null) {
   if (!session) return 'Harness idle'
-  if (session.status === 'attached') return 'Harness attached'
+  if (session.status === 'attached') {
+    return session.mode === 'android' ? 'Android harness attached' : 'Browser harness attached'
+  }
   if (session.status === 'failed') return 'Harness failed'
   return 'Harness stopped'
 }
@@ -104,19 +126,33 @@ function App() {
   const runnerCommandId = useId()
   const runnerDirectoryId = useId()
   const bridgePortId = useId()
+  const harnessModeId = useId()
   const harnessUrlId = useId()
   const harnessTextId = useId()
   const harnessKeyId = useId()
   const harnessFieldId = useId()
+  const harnessDeviceId = useId()
+  const androidDeviceId = useId()
+  const androidPackageId = useId()
+  const androidActivityId = useId()
+  const harnessPackageId = useId()
 
   const [releaseUrl, setReleaseUrl] = useState(stonefruitReleaseUrl)
   const [runnerCommand, setRunnerCommand] = useState(defaultRunnerCommand)
   const [runnerDirectory, setRunnerDirectory] = useState(defaultRunnerDirectory)
   const [bridgePort, setBridgePort] = useState(defaultBridgePort)
+  const [harnessMode, setHarnessMode] = useState<'browser' | 'android'>('browser')
   const [harnessUrl, setHarnessUrl] = useState('')
   const [harnessText, setHarnessText] = useState('Grecko QA note')
   const [harnessKey, setHarnessKey] = useState('Enter')
   const [selectedFieldIndex, setSelectedFieldIndex] = useState('0')
+  const [androidDevices, setAndroidDevices] = useState<AndroidDevice[]>([])
+  const [selectedAndroidSerial, setSelectedAndroidSerial] = useState('')
+  const [androidPackageName, setAndroidPackageName] = useState(defaultAndroidPackage)
+  const [androidActivityName, setAndroidActivityName] = useState(defaultAndroidActivity)
+  const [androidBusy, setAndroidBusy] = useState(false)
+  const [androidError, setAndroidError] = useState('')
+  const [androidStatus, setAndroidStatus] = useState('')
   const [runs, setRuns] = useState<RunRecord[]>([])
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [runBusy, setRunBusy] = useState(false)
@@ -203,6 +239,12 @@ function App() {
     try {
       const session = await fetchHarnessSession()
       setHarnessSession(session)
+      if (session?.mode) {
+        setHarnessMode(session.mode)
+      }
+      if (session?.deviceSerial) {
+        setSelectedAndroidSerial(session.deviceSerial)
+      }
       if (showErrors) {
         setHarnessError('')
       }
@@ -213,6 +255,31 @@ function App() {
 
       setHarnessError(
         error instanceof Error ? error.message : 'Could not reach the browser harness API.',
+      )
+    }
+  }
+
+  async function refreshAndroid(showErrors = true) {
+    try {
+      const devices = await fetchAndroidDevices()
+      setAndroidDevices(devices)
+      setSelectedAndroidSerial((currentSerial) => {
+        if (currentSerial && devices.some((device) => device.serial === currentSerial)) {
+          return currentSerial
+        }
+
+        return devices[0]?.serial ?? ''
+      })
+      if (showErrors) {
+        setAndroidError('')
+      }
+    } catch (error) {
+      if (!showErrors) {
+        return
+      }
+
+      setAndroidError(
+        error instanceof Error ? error.message : 'Could not reach the Android lab API.',
       )
     }
   }
@@ -277,6 +344,12 @@ function App() {
     void fetchHarnessSession()
       .then((session) => {
         setHarnessSession(session)
+        if (session?.mode) {
+          setHarnessMode(session.mode)
+        }
+        if (session?.deviceSerial) {
+          setSelectedAndroidSerial(session.deviceSerial)
+        }
         setHarnessError('')
         if (session?.fields[0]) {
           setSelectedFieldIndex(String(session.fields[0].index))
@@ -287,6 +360,22 @@ function App() {
           error instanceof Error
             ? error.message
             : 'Could not reach the browser harness API.',
+        )
+      })
+
+    void fetchAndroidDevices()
+      .then((devices) => {
+        setAndroidDevices(devices)
+        if (devices[0]) {
+          setSelectedAndroidSerial(devices[0].serial)
+        }
+        setAndroidError('')
+      })
+      .catch((error) => {
+        setAndroidError(
+          error instanceof Error
+            ? error.message
+            : 'Could not reach the Android lab API.',
         )
       })
   }, [])
@@ -306,6 +395,20 @@ function App() {
       window.clearInterval(intervalId)
     }
   }, [runnerSession?.id, runnerSession?.status])
+
+  useEffect(() => {
+    if (harnessMode !== 'android') {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshAndroid(false)
+    }, 2_000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [harnessMode])
 
   useEffect(() => {
     if (!activeRun?.execution || runnerSession?.status !== 'running') {
@@ -480,9 +583,16 @@ function App() {
 
     try {
       const session = await attachHarnessSession({
+        mode: harnessMode,
         url: harnessUrl.trim() || undefined,
+        serial: harnessMode === 'android' ? selectedAndroidSerial || undefined : undefined,
+        packageName:
+          harnessMode === 'android' ? androidPackageName.trim() || undefined : undefined,
       })
       setHarnessSession(session)
+      if (session?.mode) {
+        setHarnessMode(session.mode)
+      }
       if (session?.fields[0]) {
         setSelectedFieldIndex(String(session.fields[0].index))
       }
@@ -492,7 +602,7 @@ function App() {
       setHarnessError(
         error instanceof Error
           ? error.message
-          : 'Grecko could not attach the no-integration browser harness.',
+          : `Grecko could not attach the ${harnessMode} harness.`,
       )
     } finally {
       setHarnessBusy(false)
@@ -592,6 +702,110 @@ function App() {
       )
     } finally {
       setHarnessBusy(false)
+    }
+  }
+
+  async function handleAndroidInstall() {
+    const apkUrl = activeRun?.release.selectedAssets.android?.url
+
+    if (!selectedAndroidSerial) {
+      setAndroidError('Select a ready Android device or emulator first.')
+      return
+    }
+
+    if (!apkUrl) {
+      setAndroidError('Create or select a run with a resolved Android APK first.')
+      return
+    }
+
+    setAndroidBusy(true)
+
+    try {
+      const install = await installAndroidRelease({
+        serial: selectedAndroidSerial,
+        apkUrl,
+      })
+      setAndroidStatus(`Installed APK to ${install.serial}: ${install.output}`)
+      setAndroidError('')
+    } catch (error) {
+      setAndroidError(
+        error instanceof Error ? error.message : 'Grecko could not install the Android APK.',
+      )
+    } finally {
+      setAndroidBusy(false)
+    }
+  }
+
+  async function handleAndroidLaunch() {
+    if (!selectedAndroidSerial) {
+      setAndroidError('Select a ready Android device or emulator first.')
+      return
+    }
+
+    setAndroidBusy(true)
+
+    try {
+      if (activeRun?.release.selectedAssets.android) {
+        const run = await executeRunRecord({
+          runId: activeRun.id,
+          target: 'android',
+          serial: selectedAndroidSerial,
+          packageName: androidPackageName.trim() || defaultAndroidPackage,
+          activityName: androidActivityName.trim() || defaultAndroidActivity,
+        })
+
+        if (!run) {
+          throw new Error('Grecko did not return Android execution evidence for that run.')
+        }
+
+        setRuns((currentRuns) =>
+          currentRuns.map((currentRun) => (currentRun.id === run.id ? run : currentRun)),
+        )
+        setActiveRunId(run.id)
+        setAndroidStatus(
+          `Installed and launched ${androidPackageName.trim() || defaultAndroidPackage} on ${selectedAndroidSerial}.`,
+        )
+        await Promise.all([refreshHarness(false), refreshAndroid(false)])
+      } else {
+        const launch = await launchAndroidTarget({
+          serial: selectedAndroidSerial,
+          packageName: androidPackageName.trim() || defaultAndroidPackage,
+          activityName: androidActivityName.trim() || defaultAndroidActivity,
+        })
+        setAndroidStatus(`Launched ${launch.packageName} on ${launch.serial}.`)
+      }
+
+      setAndroidError('')
+    } catch (error) {
+      setAndroidError(
+        error instanceof Error ? error.message : 'Grecko could not launch the Android app.',
+      )
+    } finally {
+      setAndroidBusy(false)
+    }
+  }
+
+  async function handleAndroidStop() {
+    if (!selectedAndroidSerial) {
+      setAndroidError('Select a ready Android device or emulator first.')
+      return
+    }
+
+    setAndroidBusy(true)
+
+    try {
+      const launch = await stopAndroidTarget({
+        serial: selectedAndroidSerial,
+        packageName: androidPackageName.trim() || defaultAndroidPackage,
+      })
+      setAndroidStatus(`Stopped ${launch.packageName} on ${launch.serial}.`)
+      setAndroidError('')
+    } catch (error) {
+      setAndroidError(
+        error instanceof Error ? error.message : 'Grecko could not stop the Android app.',
+      )
+    } finally {
+      setAndroidBusy(false)
     }
   }
 
@@ -703,6 +917,7 @@ function App() {
         <nav className="topbar__nav" aria-label="Sections">
           <a href="#control-room">Control Room</a>
           <a href="#runner">Runner</a>
+          <a href="#android">Android</a>
           <a href="#harness">Harness</a>
           <a href="#bridge">Bridge</a>
           <a href="#dossier">Dossier</a>
@@ -842,7 +1057,7 @@ function App() {
                     <strong>{run.release.releaseName}</strong>
                     <span>{run.verdict.label}</span>
                     <small>
-                      launch {run.stages.launch} · browser {run.stages.harness}
+                      launch {run.stages.launch} · harness {run.stages.harness}
                     </small>
                   </button>
                 ))
@@ -919,7 +1134,7 @@ function App() {
                   <span>{formatStageStatus(activeRun.stages.launch)}</span>
                 </article>
                 <article className={`stage stage--${activeRun.stages.harness}`}>
-                  <strong>Browser</strong>
+                  <strong>Harness</strong>
                   <span>{formatStageStatus(activeRun.stages.harness)}</span>
                 </article>
                 <article className={`stage stage--${activeRun.stages.bridge}`}>
@@ -1054,6 +1269,187 @@ function App() {
           </div>
         </section>
 
+        <section className="panel panel--android" id="android">
+          <div className="panel__header">
+            <p className="eyebrow">Android lab</p>
+            <h2>Install and launch the release APK on a live device</h2>
+          </div>
+
+          <div className="runner-grid">
+            <form
+              className="runner-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void refreshAndroid()
+              }}
+            >
+              <label className="field" htmlFor={androidDeviceId}>
+                <span>Device or emulator</span>
+                <select
+                  id={androidDeviceId}
+                  value={selectedAndroidSerial}
+                  onChange={(event) => setSelectedAndroidSerial(event.target.value)}
+                  disabled={androidBusy || androidDevices.length === 0}
+                >
+                  {androidDevices.length ? (
+                    androidDevices.map((device) => (
+                      <option key={device.serial} value={device.serial}>
+                        {device.serial}
+                        {device.model ? ` · ${device.model}` : ''}
+                        {device.state !== 'device' ? ` · ${device.state}` : ''}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No Android targets detected</option>
+                  )}
+                </select>
+              </label>
+
+              <label className="field" htmlFor={androidPackageId}>
+                <span>Package name</span>
+                <input
+                  id={androidPackageId}
+                  type="text"
+                  value={androidPackageName}
+                  onChange={(event) => setAndroidPackageName(event.target.value)}
+                  placeholder={defaultAndroidPackage}
+                />
+              </label>
+
+              <label className="field" htmlFor={androidActivityId}>
+                <span>Launch activity</span>
+                <input
+                  id={androidActivityId}
+                  type="text"
+                  value={androidActivityName}
+                  onChange={(event) => setAndroidActivityName(event.target.value)}
+                  placeholder={defaultAndroidActivity}
+                />
+              </label>
+
+              <div className="runner-actions">
+                <button className="button button--muted" type="submit" disabled={androidBusy}>
+                  {androidBusy ? 'Working...' : 'Refresh devices'}
+                </button>
+                <button
+                  className="button"
+                  type="button"
+                  disabled={androidBusy || !activeRun?.release.selectedAssets.android}
+                  onClick={() => void handleAndroidInstall()}
+                >
+                  Install release APK
+                </button>
+                <button
+                  className="button"
+                  type="button"
+                  disabled={androidBusy || !selectedAndroidSerial}
+                  onClick={() => void handleAndroidLaunch()}
+                >
+                  Launch app
+                </button>
+                <button
+                  className="button button--muted"
+                  type="button"
+                  disabled={androidBusy || !selectedAndroidSerial}
+                  onClick={() => void handleAndroidStop()}
+                >
+                  Stop app
+                </button>
+              </div>
+
+              <p className="helper">
+                Grecko installs the Android APK selected by the active run, launches the
+                package on the chosen target, and then the shared no-integration harness can
+                drive it over adb.
+              </p>
+
+              {androidStatus ? <p className="helper">{androidStatus}</p> : null}
+              {androidError ? (
+                <p className="runner-error" role="alert">
+                  {androidError}
+                </p>
+              ) : null}
+            </form>
+
+            <article className="runner-card">
+              <div className="runner-status">
+                <span
+                  className={`provider provider--${
+                    androidDevices.some((device) => device.state === 'device')
+                      ? 'attached'
+                      : 'idle'
+                  }`}
+                >
+                  {androidDevices.some((device) => device.state === 'device')
+                    ? 'Android target ready'
+                    : 'No Android target'}
+                </span>
+                <p>
+                  {activeRun?.release.selectedAssets.android
+                    ? `Active APK: ${activeRun.release.selectedAssets.android.name}`
+                    : 'Create or select a run before installing an Android release artifact.'}
+                </p>
+              </div>
+
+              <dl className="facts facts--runner">
+                <div>
+                  <dt>Targets</dt>
+                  <dd>{androidDevices.length}</dd>
+                </div>
+                <div>
+                  <dt>Selected</dt>
+                  <dd>{selectedAndroidSerial || 'None'}</dd>
+                </div>
+                <div>
+                  <dt>APK</dt>
+                  <dd>{activeRun?.release.selectedAssets.android?.name ?? 'Not resolved'}</dd>
+                </div>
+                <div>
+                  <dt>Package</dt>
+                  <dd>{androidPackageName || defaultAndroidPackage}</dd>
+                </div>
+                <div>
+                  <dt>Activity</dt>
+                  <dd>{androidActivityName || defaultAndroidActivity}</dd>
+                </div>
+                <div>
+                  <dt>Harness mode</dt>
+                  <dd>{harnessSession?.mode ?? harnessMode}</dd>
+                </div>
+              </dl>
+
+              <div className="run-list">
+                {androidDevices.length ? (
+                  androidDevices.map((device) => (
+                    <button
+                      key={device.serial}
+                      className={`run-list__item${
+                        selectedAndroidSerial === device.serial
+                          ? ' run-list__item--active'
+                          : ''
+                      }`}
+                      type="button"
+                      onClick={() => setSelectedAndroidSerial(device.serial)}
+                    >
+                      <strong>{device.serial}</strong>
+                      <span>{device.state}</span>
+                      <small>
+                        {device.model ?? device.product ?? 'Unknown model'}
+                        {device.isEmulator ? ' · emulator' : ' · device'}
+                      </small>
+                    </button>
+                  ))
+                ) : (
+                  <p className="helper">
+                    No Android targets detected yet. Bring up a device or emulator, then
+                    refresh devices.
+                  </p>
+                )}
+              </div>
+            </article>
+          </div>
+        </section>
+
         <section className="panel panel--harness-runtime" id="harness">
           <div className="panel__header">
             <p className="eyebrow">No-Integration Harness</p>
@@ -1068,6 +1464,22 @@ function App() {
                 void handleHarnessAttach()
               }}
             >
+              <label className="field" htmlFor={harnessModeId}>
+                <span>Harness mode</span>
+                <select
+                  id={harnessModeId}
+                  value={harnessMode}
+                  onChange={(event) =>
+                    setHarnessMode(event.target.value === 'android' ? 'android' : 'browser')
+                  }
+                  disabled={harnessBusy}
+                >
+                  <option value="browser">Browser</option>
+                  <option value="android">Android</option>
+                </select>
+              </label>
+
+              {harnessMode === 'browser' ? (
               <label className="field" htmlFor={harnessUrlId}>
                 <span>Target URL override</span>
                 <input
@@ -1079,6 +1491,42 @@ function App() {
                   placeholder={harnessSession?.targetUrl ?? 'Auto-detect from runner logs'}
                 />
               </label>
+              ) : (
+                <>
+                  <label className="field" htmlFor={harnessDeviceId}>
+                    <span>Android device</span>
+                    <select
+                      id={harnessDeviceId}
+                      value={selectedAndroidSerial}
+                      onChange={(event) => setSelectedAndroidSerial(event.target.value)}
+                      disabled={harnessBusy || androidDevices.length === 0}
+                    >
+                      {androidDevices.length ? (
+                        androidDevices.map((device) => (
+                          <option key={device.serial} value={device.serial}>
+                            {device.serial}
+                            {device.model ? ` · ${device.model}` : ''}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">No Android targets detected</option>
+                      )}
+                    </select>
+                  </label>
+
+                  <label className="field" htmlFor={harnessPackageId}>
+                    <span>Android package</span>
+                    <input
+                      id={harnessPackageId}
+                      name="harness-package"
+                      type="text"
+                      value={androidPackageName}
+                      onChange={(event) => setAndroidPackageName(event.target.value)}
+                      placeholder={defaultAndroidPackage}
+                    />
+                  </label>
+                </>
+              )}
 
               <div className="runner-actions">
                 <button
@@ -1107,9 +1555,9 @@ function App() {
               </div>
 
               <p className="helper">
-                Grecko reads the launched app URL from runner logs, opens a real
-                browser session, and treats that page as the no-integration app
-                harness.
+                {harnessMode === 'browser'
+                  ? 'Grecko reads the launched app URL from runner logs, opens a real browser session, and treats that page as the no-integration app harness.'
+                  : 'Grecko attaches to the selected Android target over adb, dumps the live UI tree, taps controls, types into editable fields, and captures device screenshots.'}
               </p>
 
               <label className="field" htmlFor={harnessFieldId}>
@@ -1199,8 +1647,8 @@ function App() {
                 <p>
                   {harnessSession
                     ? harnessSession.bodyTextExcerpt ||
-                      'Grecko attached the browser harness and is ready to use the app.'
-                    : 'No harness session yet. Launch the app, then attach the browser harness.'}
+                      'Grecko attached the harness and is ready to use the app.'
+                    : 'No harness session yet. Launch the app, then attach the no-integration harness.'}
                 </p>
               </div>
 
@@ -1208,6 +1656,10 @@ function App() {
                 <div>
                   <dt>Target</dt>
                   <dd>{harnessSession?.targetUrl ?? 'Not attached'}</dd>
+                </div>
+                <div>
+                  <dt>Mode</dt>
+                  <dd>{harnessSession?.mode ?? harnessMode}</dd>
                 </div>
                 <div>
                   <dt>Title</dt>
@@ -1226,7 +1678,7 @@ function App() {
                   <dd>{harnessSession?.interactionCount ?? 0}</dd>
                 </div>
                 <div>
-                  <dt>Current URL</dt>
+                  <dt>{harnessSession?.mode === 'android' ? 'Current focus' : 'Current URL'}</dt>
                   <dd>{harnessSession?.currentUrl ?? '—'}</dd>
                 </div>
               </dl>
@@ -1262,7 +1714,7 @@ function App() {
 
               <pre className="runner-log">
                 {harnessSession?.logs.join('\n') ||
-                  'No browser harness logs yet.'}
+                  'No harness logs yet.'}
               </pre>
             </article>
           </div>
@@ -1415,9 +1867,11 @@ function App() {
                       {activeRun.execution.command} in {activeRun.execution.cwd}
                     </p>
                     <p>
-                      {activeRun.execution.runner
-                        ? `${formatRunnerStatus(activeRun.execution.runner)} with PID ${activeRun.execution.runner.pid ?? 'unknown'}.`
-                        : 'No runner evidence has been recorded yet.'}
+                      {activeRun.execution.target === 'android'
+                        ? formatAndroidLaunchStatus(activeRun.execution.android)
+                        : activeRun.execution.runner
+                          ? `${formatRunnerStatus(activeRun.execution.runner)} with PID ${activeRun.execution.runner.pid ?? 'unknown'}.`
+                          : 'No runner evidence has been recorded yet.'}
                     </p>
                   </article>
 
@@ -1430,12 +1884,12 @@ function App() {
                     <p>
                       {activeRun.execution.harness?.title
                         ? `${activeRun.execution.harness.title} via ${activeRun.execution.harness.currentUrl}`
-                        : 'No browser-harness evidence has been recorded yet.'}
+                        : 'No no-integration harness evidence has been recorded yet.'}
                     </p>
                     <p>
                       {activeRun.execution.harness
                         ? `${activeRun.execution.harness.buttons.length} controls, ${activeRun.execution.harness.fields.length} fields, ${activeRun.execution.harness.interactionCount} actions.`
-                        : 'Attach the browser harness to use the app without any target-side plugin.'}
+                        : 'Attach the no-integration harness to use the app without any target-side plugin.'}
                     </p>
                   </article>
 

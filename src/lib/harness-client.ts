@@ -17,6 +17,7 @@ export type HarnessField = {
 
 export type HarnessSession = {
   id: string
+  mode?: 'browser' | 'android'
   status: 'attached' | 'failed' | 'stopped'
   attachedAt: string
   lastActionAt: string
@@ -29,6 +30,17 @@ export type HarnessSession = {
   bodyTextExcerpt: string
   screenshotDataUrl: string | null
   logs: string[]
+  deviceSerial?: string
+  packageName?: string
+}
+
+export type HarnessAndroidDevice = {
+  serial: string
+  state: string
+  model: string | null
+  product: string | null
+  transportId: string | null
+  isEmulator: boolean
 }
 
 type HarnessPayload = {
@@ -52,7 +64,12 @@ export async function fetchHarnessSession() {
   return payload.session
 }
 
-export async function attachHarnessSession(input: { url?: string }) {
+export async function attachHarnessSession(input: {
+  mode?: 'browser' | 'android'
+  url?: string
+  serial?: string
+  packageName?: string
+}) {
   const response = await fetch('/api/harness/attach', {
     method: 'POST',
     headers: {
@@ -63,6 +80,20 @@ export async function attachHarnessSession(input: { url?: string }) {
 
   const payload = await readHarnessPayload(response)
   return payload.session
+}
+
+export async function fetchHarnessAndroidDevices() {
+  const response = await fetch('/api/harness/android/devices')
+  const payload = (await response.json()) as {
+    devices?: HarnessAndroidDevice[]
+    error?: string
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error ?? 'Android harness request failed.')
+  }
+
+  return payload.devices ?? []
 }
 
 export async function refreshHarnessSession() {
