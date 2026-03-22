@@ -7,6 +7,22 @@ const LOG_LIMIT = 120
 let currentSession = null
 let nextSessionId = 1
 
+function killProcessGroup(session, signal) {
+  if (!session?.pid) {
+    return
+  }
+
+  try {
+    process.kill(-session.pid, signal)
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') {
+      return
+    }
+
+    throw error
+  }
+}
+
 function appendLog(session, stream, message) {
   const lines = message
     .split(/\r?\n/)
@@ -82,6 +98,7 @@ export function startRunner(payload) {
 
   const child = spawn('bash', ['-lc', command], {
     cwd,
+    detached: true,
     env: process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -98,6 +115,7 @@ export function startRunner(payload) {
     exitCode: null,
     signal: null,
     logs: [],
+    stopRequested: false,
   }
 
   appendLog(session, 'system', `Launching command: ${command}`)
@@ -122,6 +140,16 @@ export function startRunner(payload) {
     session.signal = signal
     session.endedAt = new Date().toISOString()
     session.exitCode = typeof code === 'number' ? code : null
+
+    if (session.stopRequested) {
+      session.status = 'stopped'
+      appendLog(
+        session,
+        'system',
+        `Process group stopped${signal ? ` with signal ${signal}` : '.'}`,
+      )
+      return
+    }
 
     if (signal) {
       session.status = 'stopped'
@@ -149,13 +177,14 @@ export function stopRunner() {
     return serializeSession(currentSession)
   }
 
+  currentSession.stopRequested = true
   appendLog(currentSession, 'system', 'Stopping process with SIGTERM.')
-  currentSession.child.kill('SIGTERM')
+  killProcessGroup(currentSession, 'SIGTERM')
 
   setTimeout(() => {
     if (currentSession?.status === 'running') {
       appendLog(currentSession, 'system', 'Escalating stop to SIGKILL.')
-      currentSession.child.kill('SIGKILL')
+      killProcessGroup(currentSession, 'SIGKILL')
     }
   }, 2_000).unref()
 
@@ -164,7 +193,8 @@ export function stopRunner() {
 
 export function resetRunnerStateForTests() {
   if (currentSession?.status === 'running') {
-    currentSession.child.kill('SIGKILL')
+    currentSession.stopRequested = true
+    killProcessGroup(currentSession, 'SIGKILL')
   }
 
   currentSession = null

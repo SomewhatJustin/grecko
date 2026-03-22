@@ -8,6 +8,15 @@ import {
   validateLaunchRequest,
 } from './runner-store.js'
 
+function processExists(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function waitFor(check, timeoutMs = 3_000) {
   const startedAt = Date.now()
 
@@ -70,5 +79,31 @@ describe('startRunner', () => {
     })
 
     expect(stoppedSession.signal).toMatch(/SIGTERM|SIGKILL/)
+  })
+
+  it('kills descendant processes when stopping a runner', async () => {
+    startRunner({
+      command:
+        `sh -c 'node -e "setInterval(() => {}, 10000)" & echo child:$!; wait'`,
+      cwd: '.',
+    })
+
+    const childPid = await waitFor(() => {
+      const session = getRunnerSession()
+      const match = session?.logs.join('\n').match(/child:(\d+)/)
+      return match ? Number(match[1]) : null
+    })
+
+    expect(processExists(childPid)).toBe(true)
+
+    stopRunner()
+
+    await waitFor(() => {
+      const session = getRunnerSession()
+      return session?.status === 'stopped' ? session : null
+    })
+
+    await waitFor(() => (processExists(childPid) ? null : true))
+    expect(processExists(childPid)).toBe(false)
   })
 })
