@@ -16,7 +16,14 @@ import {
   stopHarness,
   typeHarness,
 } from './harness-store.js'
-import { createRun, executeRun, listRuns, syncRunExecution } from './runs-store.js'
+import { listScenarios } from './scenario-store.js'
+import {
+  createRun,
+  executeRun,
+  executeScenarioRun,
+  listRuns,
+  syncRunExecution,
+} from './runs-store.js'
 import { getRunnerSession, startRunner, stopRunner } from './runner-store.js'
 
 const PORT = Number(process.env.GRECKO_API_PORT ?? 4174)
@@ -132,6 +139,23 @@ const server = http.createServer(async (request, response) => {
         error: error instanceof Error ? error.message : 'Could not sync run execution.',
       })
     }
+    return
+  }
+
+  if (request.url === '/api/runs/scenario' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { run: await executeScenarioRun(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not execute scenario.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/scenarios' && request.method === 'GET') {
+    sendJson(response, 200, { scenarios: listScenarios() })
     return
   }
 

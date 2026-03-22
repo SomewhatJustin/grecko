@@ -32,6 +32,7 @@ import {
 import {
   createRun as createRunRecord,
   executeRun as executeRunRecord,
+  executeScenario as executeScenarioRecord,
   fetchRuns,
   syncRun as syncRunRecord,
   type RunRecord,
@@ -42,6 +43,7 @@ import {
   stopRunnerSession,
   type RunnerSession,
 } from './lib/runner-client'
+import { fetchScenarios, type ScenarioDefinition } from './lib/scenario-client'
 
 const launchPillars = [
   {
@@ -121,6 +123,13 @@ function formatStageStatus(stage: string) {
   return 'Pending'
 }
 
+function formatScenarioStatus(status?: string) {
+  if (status === 'completed') return 'Scenario passed'
+  if (status === 'failed') return 'Scenario failed'
+  if (status === 'running') return 'Scenario running'
+  return 'Scenario not run'
+}
+
 function App() {
   const intakeId = useId()
   const runnerCommandId = useId()
@@ -166,6 +175,10 @@ function App() {
   const [runnerBusy, setRunnerBusy] = useState(false)
   const [harnessBusy, setHarnessBusy] = useState(false)
   const [bridgeBusy, setBridgeBusy] = useState(false)
+  const [scenarios, setScenarios] = useState<ScenarioDefinition[]>([])
+  const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null)
+  const [scenarioBusy, setScenarioBusy] = useState(false)
+  const [scenarioError, setScenarioError] = useState('')
 
   const intake = validateReleaseIntake(releaseUrl)
   const provider = detectReleaseProvider(releaseUrl)
@@ -177,6 +190,30 @@ function App() {
 
     return runs.find((run) => run.id === activeRunId) ?? runs[0]
   }, [activeRunId, runs])
+
+  const scenarioTarget =
+    activeRun?.execution?.target === 'android' || activeRun?.execution?.android
+      ? 'android'
+      : 'browser'
+
+  const availableScenarios = useMemo(() => {
+    if (!activeRun?.execution) {
+      return scenarios
+    }
+
+    return scenarios.filter((scenario) => scenario.target === scenarioTarget)
+  }, [activeRun?.execution, scenarioTarget, scenarios])
+
+  const activeScenario = useMemo(() => {
+    if (availableScenarios.length === 0) {
+      return null
+    }
+
+    return (
+      availableScenarios.find((scenario) => scenario.id === activeScenarioId) ??
+      availableScenarios[0]
+    )
+  }, [activeScenarioId, availableScenarios])
 
   async function refreshRuns(showErrors = true) {
     try {
@@ -284,6 +321,25 @@ function App() {
     }
   }
 
+  async function refreshScenarios(showErrors = true) {
+    try {
+      const nextScenarios = await fetchScenarios()
+      setScenarios(nextScenarios)
+      setActiveScenarioId((currentId) => currentId ?? nextScenarios[0]?.id ?? null)
+      if (showErrors) {
+        setScenarioError('')
+      }
+    } catch (error) {
+      if (!showErrors) {
+        return
+      }
+
+      setScenarioError(
+        error instanceof Error ? error.message : 'Could not load the saved scenarios.',
+      )
+    }
+  }
+
   async function syncActiveRunEvidence() {
     if (!activeRun?.execution) {
       return
@@ -376,6 +432,22 @@ function App() {
           error instanceof Error
             ? error.message
             : 'Could not reach the Android lab API.',
+        )
+      })
+
+    void fetchScenarios()
+      .then((nextScenarios) => {
+        setScenarios(nextScenarios)
+        if (nextScenarios[0]) {
+          setActiveScenarioId(nextScenarios[0].id)
+        }
+        setScenarioError('')
+      })
+      .catch((error) => {
+        setScenarioError(
+          error instanceof Error
+            ? error.message
+            : 'Could not load the saved scenarios.',
         )
       })
   }, [])
@@ -869,6 +941,48 @@ function App() {
     }
   }
 
+  async function handleScenarioRun() {
+    if (!activeRun) {
+      setScenarioError('Select a run before starting a scenario.')
+      return
+    }
+
+    if (!activeRun.execution) {
+      setScenarioError('Execute the run before starting a scenario.')
+      return
+    }
+
+    if (!activeScenario) {
+      setScenarioError('Select a saved scenario first.')
+      return
+    }
+
+    setScenarioBusy(true)
+
+    try {
+      const run = await executeScenarioRecord({
+        runId: activeRun.id,
+        scenarioId: activeScenario.id,
+      })
+
+      if (!run) {
+        throw new Error('Grecko did not return updated scenario evidence.')
+      }
+
+      setRuns((currentRuns) =>
+        currentRuns.map((currentRun) => (currentRun.id === run.id ? run : currentRun)),
+      )
+      setScenarioError('')
+      await Promise.all([refreshHarness(false), refreshRuns(false)])
+    } catch (error) {
+      setScenarioError(
+        error instanceof Error ? error.message : 'Grecko could not execute that scenario.',
+      )
+    } finally {
+      setScenarioBusy(false)
+    }
+  }
+
   const displayPlatforms =
     activeRun?.release.targetStatuses.map((target) => ({
       name: target.target === 'linux' ? 'Linux' : 'Android',
@@ -919,6 +1033,7 @@ function App() {
           <a href="#runner">Runner</a>
           <a href="#android">Android</a>
           <a href="#harness">Harness</a>
+          <a href="#scenarios">Scenarios</a>
           <a href="#bridge">Bridge</a>
           <a href="#dossier">Dossier</a>
           <a href="#harnesses">Harnesses</a>
@@ -1057,7 +1172,8 @@ function App() {
                     <strong>{run.release.releaseName}</strong>
                     <span>{run.verdict.label}</span>
                     <small>
-                      launch {run.stages.launch} · harness {run.stages.harness}
+                      launch {run.stages.launch} · harness {run.stages.harness} ·
+                      scenario {run.stages.scenario ?? 'pending'}
                     </small>
                   </button>
                 ))
@@ -1140,6 +1256,10 @@ function App() {
                 <article className={`stage stage--${activeRun.stages.bridge}`}>
                   <strong>Bridge</strong>
                   <span>{formatStageStatus(activeRun.stages.bridge)}</span>
+                </article>
+                <article className={`stage stage--${activeRun.stages.scenario ?? 'pending'}`}>
+                  <strong>Scenario</strong>
+                  <span>{formatStageStatus(activeRun.stages.scenario ?? 'pending')}</span>
                 </article>
               </div>
             ) : null}
@@ -1720,6 +1840,136 @@ function App() {
           </div>
         </section>
 
+        <section className="panel panel--scenario-runtime" id="scenarios">
+          <div className="panel__header">
+            <p className="eyebrow">Scenario runs</p>
+            <h2>Turn harness steps into repeatable release checks</h2>
+          </div>
+
+          <div className="runner-grid">
+            <form
+              className="runner-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void handleScenarioRun()
+              }}
+            >
+              <label className="field" htmlFor="scenario-select">
+                <span>Saved scenario</span>
+                <select
+                  id="scenario-select"
+                  value={activeScenario?.id ?? ''}
+                  onChange={(event) => setActiveScenarioId(event.target.value)}
+                >
+                  {availableScenarios.length === 0 ? (
+                    <option value="">No matching scenarios yet</option>
+                  ) : (
+                    availableScenarios.map((scenario) => (
+                      <option key={scenario.id} value={scenario.id}>
+                        {scenario.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+
+              <div className="runner-actions">
+                <button
+                  className="button"
+                  type="submit"
+                  disabled={scenarioBusy || !activeRun?.execution || !activeScenario}
+                >
+                  {scenarioBusy ? 'Running scenario...' : 'Run scenario'}
+                </button>
+                <button
+                  className="button button--muted"
+                  type="button"
+                  disabled={scenarioBusy}
+                  onClick={() => void refreshScenarios()}
+                >
+                  Refresh scenarios
+                </button>
+              </div>
+
+              <p className="helper">
+                Saved scenarios execute concrete harness steps, then turn assertions into
+                dossier evidence and verdict changes.
+              </p>
+
+              {scenarioError ? (
+                <p className="runner-error" role="alert">
+                  {scenarioError}
+                </p>
+              ) : null}
+            </form>
+
+            <article className="runner-card">
+              <div className="runner-status">
+                <span
+                  className={`provider provider--${
+                    activeRun?.stages.scenario ?? 'idle'
+                  }`}
+                >
+                  {formatScenarioStatus(activeRun?.stages.scenario)}
+                </span>
+                <p>
+                  {activeScenario?.description ??
+                    'Select a saved scenario to see how Grecko will drive the app.'}
+                </p>
+              </div>
+
+              <dl className="facts facts--runner">
+                <div>
+                  <dt>Scenario target</dt>
+                  <dd>{activeScenario?.target ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt>Steps</dt>
+                  <dd>{activeScenario?.steps.length ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>Assertions passed</dt>
+                  <dd>{activeRun?.execution?.scenario?.passedAssertions ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>Assertions failed</dt>
+                  <dd>{activeRun?.execution?.scenario?.failedAssertions ?? 0}</dd>
+                </div>
+              </dl>
+
+              <div className="findings">
+                {(activeRun?.execution?.scenario?.stepResults ?? []).length ? (
+                  activeRun?.execution?.scenario?.stepResults.map((step) => (
+                    <article key={`${step.index}-${step.type}`} className="finding">
+                      <div className="finding__meta">
+                        <span>{step.status.toUpperCase()}</span>
+                        <span>result</span>
+                      </div>
+                      <h3>{step.type}</h3>
+                      <p>{step.detail}</p>
+                    </article>
+                  ))
+                ) : activeScenario ? (
+                  activeScenario.steps.map((step, index) => (
+                    <article key={`${index}-${step.type}`} className="finding">
+                      <div className="finding__meta">
+                        <span>STEP</span>
+                        <span>{activeScenario.target}</span>
+                      </div>
+                      <h3>{step.type}</h3>
+                      <p>{JSON.stringify(step)}</p>
+                    </article>
+                  ))
+                ) : (
+                  <p className="helper">
+                    No scenarios available yet for the current run target.
+                  </p>
+                )}
+              </div>
+            </article>
+          </div>
+        </section>
+
         <section className="panel panel--bridge" id="bridge">
           <div className="panel__header">
             <p className="eyebrow">MCP bridge</p>
@@ -1907,6 +2157,23 @@ function App() {
                       {activeRun.execution.bridge
                         ? `Driver port ${activeRun.execution.port} · connected ${activeRun.execution.bridge.connected ? 'yes' : 'no'}`
                         : `Driver port ${activeRun.execution.port}`}
+                    </p>
+                  </article>
+
+                  <article className="finding">
+                    <div className="finding__meta">
+                      <span>SCENARIO</span>
+                      <span>{activeRun.stages.scenario ?? 'pending'}</span>
+                    </div>
+                    <h3>Scenario evidence</h3>
+                    <p>
+                      {activeRun.execution.scenario?.summary ??
+                        'No saved scenario has been executed for this run yet.'}
+                    </p>
+                    <p>
+                      {activeRun.execution.scenario
+                        ? `${activeRun.execution.scenario.passedAssertions} passed · ${activeRun.execution.scenario.failedAssertions} failed`
+                        : 'Run a saved scenario to turn harness interactions into concrete release checks.'}
                     </p>
                   </article>
                 </div>

@@ -342,6 +342,7 @@
 .panel--runner,
 .panel--android,
 .panel--harness-runtime,
+.panel--scenario-runtime,
 .panel--bridge,
 .panel--findings,
 .panel--harnesses {
@@ -652,6 +653,7 @@
   .grid,
   .panel--android,
   .panel--harness-runtime,
+  .panel--scenario-runtime,
   .panel--bridge,
   .panel--findings,
   .panel--harnesses {

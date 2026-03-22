@@ -89,6 +89,28 @@ export type RunAndroidExecution = {
   logs: string[]
 }
 
+export type RunScenarioStepResult = {
+  index: number
+  type: string
+  status: 'passed' | 'failed'
+  detail: string
+}
+
+export type RunScenarioExecution = {
+  id: string
+  name: string
+  target: 'android' | 'browser'
+  status: 'passed' | 'failed' | 'running'
+  startedAt: string
+  completedAt: string
+  summary: string
+  passedAssertions: number
+  failedAssertions: number
+  stepResults: RunScenarioStepResult[]
+  screenshotDataUrl: string | null
+  bodyTextExcerpt: string
+}
+
 export type RunRecord = {
   id: string
   createdAt: string
@@ -126,6 +148,7 @@ export type RunRecord = {
     launch: string
     harness: string
     bridge: string
+    scenario?: string
   }
   execution: {
     target?: 'desktop' | 'android'
@@ -138,6 +161,7 @@ export type RunRecord = {
     android?: RunAndroidExecution | null
     harness: RunHarnessSession | null
     bridge: RunBridgeSession | null
+    scenario?: RunScenarioExecution | null
   } | null
 }
 
@@ -200,6 +224,19 @@ export async function executeRun(input: {
 
 export async function syncRun(input: { runId: string }) {
   const response = await fetch('/api/runs/sync', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  })
+
+  const payload = await readRunsPayload(response)
+  return payload.run
+}
+
+export async function executeScenario(input: { runId: string; scenarioId: string }) {
+  const response = await fetch('/api/runs/scenario', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

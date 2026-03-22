@@ -273,4 +273,91 @@ describe('computeRunVerdict', () => {
     expect(run.verdict.label).toBe('ship')
     expect(run.verdict.reasonCodes).toContain('HARNESS_USED')
   })
+
+  it('ships when a saved scenario passes', () => {
+    const run = applyExecutionEvidence(createBaseRun(), {
+      target: 'android',
+      command: 'adb install -r stonefruit.apk && am start -n com.futo.notes/.MainActivity',
+      cwd: 'android://emulator-5554',
+      port: 0,
+      startedAt: '2026-03-22T00:01:00.000Z',
+      lastSyncedAt: '2026-03-22T00:01:03.000Z',
+      runner: null,
+      android: {
+        serial: 'emulator-5554',
+        packageName: 'com.futo.notes',
+        activityName: 'com.futo.notes/.MainActivity',
+        status: 'stopped',
+        installedApkPath: '/tmp/stonefruit.apk',
+        installOutput: 'Success',
+        launchedAt: '2026-03-22T00:01:00.000Z',
+        checkedAt: '2026-03-22T00:01:03.000Z',
+        pid: null,
+        focused: true,
+        logs: [],
+      },
+      harness: null,
+      bridge: null,
+      scenario: {
+        id: 'stonefruit-android-quick-capture',
+        name: 'Stonefruit Android Quick Capture',
+        target: 'android',
+        status: 'passed',
+        startedAt: '2026-03-22T00:01:00.000Z',
+        completedAt: '2026-03-22T00:01:03.000Z',
+        summary: 'Scenario passed.',
+        passedAssertions: 2,
+        failedAssertions: 0,
+        stepResults: [],
+        screenshotDataUrl: null,
+        bodyTextExcerpt: 'Grecko Scenario Note Scenario body recorded by Grecko',
+      },
+    })
+
+    expect(run.stages.scenario).toBe('completed')
+    expect(run.verdict.label).toBe('ship')
+    expect(run.verdict.reasonCodes).toContain('SCENARIO_PASSED')
+  })
+
+  it('blocks when a saved scenario fails', () => {
+    const run = applyExecutionEvidence(createBaseRun(), {
+      command: 'npm run tauri:dev',
+      cwd: '/tmp/stonefruit',
+      port: 9223,
+      startedAt: '2026-03-22T00:01:00.000Z',
+      lastSyncedAt: '2026-03-22T00:01:03.000Z',
+      runner: {
+        id: '1',
+        command: 'npm run tauri:dev',
+        cwd: '/tmp/stonefruit',
+        pid: 123,
+        status: 'running',
+        startedAt: '2026-03-22T00:01:00.000Z',
+        endedAt: null,
+        exitCode: null,
+        signal: null,
+        logs: [],
+      },
+      harness: null,
+      bridge: null,
+      scenario: {
+        id: 'stonefruit-browser-new-note',
+        name: 'Stonefruit Browser New Note',
+        target: 'browser',
+        status: 'failed',
+        startedAt: '2026-03-22T00:01:00.000Z',
+        completedAt: '2026-03-22T00:01:03.000Z',
+        summary: 'Scenario failed.',
+        passedAssertions: 1,
+        failedAssertions: 1,
+        stepResults: [],
+        screenshotDataUrl: null,
+        bodyTextExcerpt: '',
+      },
+    })
+
+    expect(run.stages.scenario).toBe('failed')
+    expect(run.verdict.label).toBe('block')
+    expect(run.verdict.reasonCodes).toContain('SCENARIO_ASSERTION_FAILED')
+  })
 })

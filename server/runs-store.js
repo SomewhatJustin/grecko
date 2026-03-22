@@ -4,7 +4,15 @@ import path from 'node:path'
 import { computeIntakeVerdict, resolveRelease } from './release-resolver.js'
 import { inspectAndroidApp, installAndroidApk, launchAndroidApp } from './android-store.js'
 import { checkBridge, getBridgeSession } from './bridge-store.js'
-import { attachHarness, getHarnessSession } from './harness-store.js'
+import {
+  attachHarness,
+  clickHarness,
+  getHarnessSession,
+  pressHarness,
+  refreshHarness,
+  typeHarness,
+} from './harness-store.js'
+import { getScenarioDefinition } from './scenario-store.js'
 import { getRunnerSession, startRunner } from './runner-store.js'
 
 const dataDir = path.join(process.cwd(), '.grecko-data', 'runs')
@@ -179,6 +187,38 @@ function summarizeHarnessState(harnessSession) {
   }
 }
 
+function summarizeScenarioState(scenarioExecution) {
+  if (!scenarioExecution) {
+    return {
+      stage: 'pending',
+      reasonCodes: ['SCENARIO_NOT_RUN'],
+      summary: 'Grecko has not run a saved scenario against this release yet.',
+    }
+  }
+
+  if (scenarioExecution.status === 'failed') {
+    return {
+      stage: 'failed',
+      reasonCodes: ['SCENARIO_ASSERTION_FAILED'],
+      summary: scenarioExecution.summary,
+    }
+  }
+
+  if (scenarioExecution.status === 'passed') {
+    return {
+      stage: 'completed',
+      reasonCodes: ['SCENARIO_PASSED'],
+      summary: scenarioExecution.summary,
+    }
+  }
+
+  return {
+    stage: 'running',
+    reasonCodes: ['SCENARIO_RUNNING'],
+    summary: scenarioExecution.summary,
+  }
+}
+
 export function computeRunVerdict(run) {
   const intakeVerdict = computeIntakeVerdict(run.release)
 
@@ -189,6 +229,7 @@ export function computeRunVerdict(run) {
   const launch = summarizeLaunchState(run.execution ?? null)
   const harness = summarizeHarnessState(run.execution?.harness ?? null)
   const bridge = summarizeBridgeState(run.execution?.bridge ?? null)
+  const scenario = summarizeScenarioState(run.execution?.scenario ?? null)
 
   if (launch.stage === 'failed') {
     return {
@@ -204,6 +245,22 @@ export function computeRunVerdict(run) {
       reasonCodes: ['INTAKE_READY', ...launch.reasonCodes],
       summary:
         'Release intake is complete and Grecko found Linux + Android artifacts, but execution evidence has not been collected yet.',
+    }
+  }
+
+  if (scenario.stage === 'failed') {
+    return {
+      label: 'block',
+      reasonCodes: ['INTAKE_READY', ...launch.reasonCodes, ...scenario.reasonCodes],
+      summary: 'Grecko launched the target app, but the saved scenario failed.',
+    }
+  }
+
+  if (scenario.stage === 'completed') {
+    return {
+      label: 'ship',
+      reasonCodes: ['INTAKE_READY', ...launch.reasonCodes, ...scenario.reasonCodes],
+      summary: 'Grecko launched the target app and passed the saved scenario checks.',
     }
   }
 
@@ -242,12 +299,14 @@ function computeStages(execution) {
   const launch = summarizeLaunchState(execution ?? null)
   const harness = summarizeHarnessState(execution?.harness ?? null)
   const bridge = summarizeBridgeState(execution?.bridge ?? null)
+  const scenario = summarizeScenarioState(execution?.scenario ?? null)
 
   return {
     intake: 'completed',
     launch: launch.stage,
     harness: harness.stage,
     bridge: bridge.stage,
+    scenario: scenario.stage,
   }
 }
 
@@ -276,6 +335,7 @@ function hydrateRun(run) {
             run.execution.target ?? (run.execution.android ? 'android' : 'desktop'),
           android: run.execution.android ?? null,
           harness: run.execution.harness ?? null,
+          scenario: run.execution.scenario ?? null,
         }
       : null,
   }
@@ -315,6 +375,7 @@ export async function createRun({ releaseUrl }) {
       launch: 'pending',
       harness: 'pending',
       bridge: 'pending',
+      scenario: 'pending',
     },
   }
 
@@ -487,6 +548,271 @@ export async function executeRun({
     android: null,
     harness,
     bridge: bridge ?? previousBridge,
+  })
+
+  writeRun(nextRun)
+  return nextRun
+}
+
+function normalizeText(value) {
+  return String(value ?? '')
+    .replace(/&#10;/g, '\n')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+function findButtonIndexByText(session, text) {
+  const normalizedNeedle = normalizeText(text)
+  return session.buttons.findIndex((button) => normalizeText(button.text).includes(normalizedNeedle))
+}
+
+function harnessContainsText(session, text) {
+  const haystack = [
+    session.bodyTextExcerpt,
+    ...session.buttons.map((button) => button.text),
+    ...session.fields.map((field) => field.value),
+  ]
+    .map(normalizeText)
+    .join(' ')
+
+  return haystack.includes(normalizeText(text))
+}
+
+async function ensureScenarioHarness(run) {
+  if (!run.execution) {
+    throw new Error('Execute the run before starting a scenario.')
+  }
+
+  if (run.execution.target === 'android' || run.execution.android) {
+    return attachHarness({
+      mode: 'android',
+      serial:
+        run.execution.android?.serial ??
+        run.execution.harness?.deviceSerial ??
+        undefined,
+      packageName:
+        run.execution.android?.packageName ??
+        run.execution.harness?.packageName ??
+        undefined,
+    })
+  }
+
+  return attachHarness({
+    mode: 'browser',
+    url:
+      run.execution.harness?.targetUrl ??
+      run.execution.harness?.currentUrl ??
+      undefined,
+  })
+}
+
+export async function executeScenarioRun({ runId, scenarioId }) {
+  const run = readRun(runId)
+
+  if (!run) {
+    throw new Error('Grecko could not find that run.')
+  }
+
+  if (!run.execution) {
+    throw new Error('Execute the run before starting a saved scenario.')
+  }
+
+  const scenario = getScenarioDefinition(scenarioId)
+
+  if (!scenario) {
+    throw new Error('Grecko could not find that scenario.')
+  }
+
+  const runTarget =
+    run.execution.target === 'android' || run.execution.android ? 'android' : 'browser'
+
+  if (scenario.target !== runTarget) {
+    throw new Error(
+      `Scenario "${scenario.name}" targets ${scenario.target}, but this run is ${runTarget}.`,
+    )
+  }
+
+  let session = await ensureScenarioHarness(run)
+  const stepResults = []
+  let failed = false
+  let failedAssertions = 0
+  let passedAssertions = 0
+  const startedAt = new Date().toISOString()
+
+  for (const [index, step] of scenario.steps.entries()) {
+    try {
+      if (step.type === 'refreshHarness') {
+        session = await refreshHarness()
+        stepResults.push({
+          index,
+          type: step.type,
+          status: 'passed',
+          detail: 'Refreshed the live harness snapshot.',
+        })
+        continue
+      }
+
+      if (step.type === 'clickButtonText') {
+        const buttonIndex = findButtonIndexByText(session, step.text)
+
+        if (buttonIndex < 0) {
+          throw new Error(`Could not find control matching "${step.text}".`)
+        }
+
+        session = await clickHarness({ buttonIndex })
+        stepResults.push({
+          index,
+          type: step.type,
+          status: 'passed',
+          detail: `Clicked "${step.text}".`,
+        })
+        continue
+      }
+
+      if (step.type === 'clickButtonIndex') {
+        session = await clickHarness({ buttonIndex: step.buttonIndex })
+        stepResults.push({
+          index,
+          type: step.type,
+          status: 'passed',
+          detail: `Clicked control ${step.buttonIndex}.`,
+        })
+        continue
+      }
+
+      if (step.type === 'typeFieldIndex') {
+        session = await typeHarness({
+          fieldIndex: step.fieldIndex,
+          text: step.text,
+          clear: step.clear,
+        })
+        stepResults.push({
+          index,
+          type: step.type,
+          status: 'passed',
+          detail: `Typed into field ${step.fieldIndex}.`,
+        })
+        continue
+      }
+
+      if (step.type === 'pressKey') {
+        session = await pressHarness({ key: step.key })
+        stepResults.push({
+          index,
+          type: step.type,
+          status: 'passed',
+          detail: `Pressed ${step.key}.`,
+        })
+        continue
+      }
+
+      if (step.type === 'assertTextPresent') {
+        const passed = harnessContainsText(session, step.text)
+        passed ? passedAssertions++ : failedAssertions++
+        stepResults.push({
+          index,
+          type: step.type,
+          status: passed ? 'passed' : 'failed',
+          detail: passed
+            ? `Found text "${step.text}".`
+            : `Missing text "${step.text}".`,
+        })
+        failed ||= !passed
+        if (!passed) {
+          break
+        }
+        continue
+      }
+
+      if (step.type === 'assertButtonPresent') {
+        const buttonIndex = findButtonIndexByText(session, step.text)
+        const passed = buttonIndex >= 0
+        passed ? passedAssertions++ : failedAssertions++
+        stepResults.push({
+          index,
+          type: step.type,
+          status: passed ? 'passed' : 'failed',
+          detail: passed
+            ? `Found control "${step.text}".`
+            : `Missing control "${step.text}".`,
+        })
+        failed ||= !passed
+        if (!passed) {
+          break
+        }
+        continue
+      }
+
+      if (step.type === 'assertFieldContains') {
+        const field = session.fields.find((candidate) => candidate.index === step.fieldIndex)
+        const passed = normalizeText(field?.value).includes(normalizeText(step.text))
+        passed ? passedAssertions++ : failedAssertions++
+        stepResults.push({
+          index,
+          type: step.type,
+          status: passed ? 'passed' : 'failed',
+          detail: passed
+            ? `Field ${step.fieldIndex} contains "${step.text}".`
+            : `Field ${step.fieldIndex} does not contain "${step.text}".`,
+        })
+        failed ||= !passed
+        if (!passed) {
+          break
+        }
+        continue
+      }
+
+      if (step.type === 'captureEvidence') {
+        session = await refreshHarness()
+        const passed = Boolean(session.screenshotDataUrl)
+        stepResults.push({
+          index,
+          type: step.type,
+          status: passed ? 'passed' : 'failed',
+          detail: passed
+            ? `Captured evidence for ${step.label ?? 'scenario step'}.`
+            : 'Harness did not return a screenshot.',
+        })
+        failed ||= !passed
+        if (!passed) {
+          break
+        }
+      }
+    } catch (error) {
+      stepResults.push({
+        index,
+        type: step.type,
+        status: 'failed',
+        detail: error instanceof Error ? error.message : 'Scenario step failed.',
+      })
+      failed = true
+      break
+    }
+  }
+
+  const scenarioExecution = {
+    id: scenario.id,
+    name: scenario.name,
+    target: scenario.target,
+    status: failed ? 'failed' : 'passed',
+    startedAt,
+    completedAt: new Date().toISOString(),
+    summary: failed
+      ? `Scenario "${scenario.name}" failed.`
+      : `Scenario "${scenario.name}" passed.`,
+    passedAssertions,
+    failedAssertions,
+    stepResults,
+    screenshotDataUrl: session.screenshotDataUrl ?? null,
+    bodyTextExcerpt: session.bodyTextExcerpt ?? '',
+  }
+
+  const nextRun = applyExecutionEvidence(run, {
+    ...run.execution,
+    lastSyncedAt: new Date().toISOString(),
+    harness: session,
+    scenario: scenarioExecution,
   })
 
   writeRun(nextRun)
