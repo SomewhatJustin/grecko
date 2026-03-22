@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { checkBridge, getBridgeSession, startBridge, stopBridge } from './bridge-store.js'
 import { getRunnerSession, startRunner, stopRunner } from './runner-store.js'
 
 const PORT = Number(process.env.GRECKO_API_PORT ?? 4174)
@@ -73,6 +74,46 @@ const server = http.createServer(async (request, response) => {
 
   if (request.url === '/api/runner/stop' && request.method === 'POST') {
     sendJson(response, 200, { session: stopRunner() })
+    return
+  }
+
+  if (request.url === '/api/bridge' && request.method === 'GET') {
+    sendJson(response, 200, { session: getBridgeSession() })
+    return
+  }
+
+  if (request.url === '/api/bridge/check' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { session: checkBridge(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not inspect bridge setup.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/bridge/start' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { session: startBridge(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not start bridge session.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/bridge/stop' && request.method === 'POST') {
+    try {
+      sendJson(response, 200, { session: stopBridge() })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not stop bridge session.',
+      })
+    }
     return
   }
 

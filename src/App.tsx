@@ -11,6 +11,13 @@ import {
   stopRunnerSession,
   type RunnerSession,
 } from './lib/runner-client'
+import {
+  checkBridgeSession,
+  fetchBridgeSession,
+  startBridgeSession,
+  stopBridgeSession,
+  type BridgeSession,
+} from './lib/bridge-client'
 
 const runSnapshot = {
   verdict: 'investigate',
@@ -87,6 +94,7 @@ const dossierNotes = [
 
 const defaultRunnerCommand = 'npm run tauri dev'
 const defaultRunnerDirectory = '/home/justin/Developer/stonefruit'
+const defaultBridgePort = '9223'
 
 function formatRunnerStatus(session: RunnerSession | null) {
   if (!session) {
@@ -105,16 +113,40 @@ function formatRunnerStatus(session: RunnerSession | null) {
   }
 }
 
+function formatBridgeStatus(session: BridgeSession | null) {
+  if (!session) {
+    return 'Bridge idle'
+  }
+
+  switch (session.status) {
+    case 'ready':
+      return 'Bridge connected'
+    case 'unavailable':
+      return 'Bridge not installed'
+    case 'failed':
+      return 'Bridge failed'
+    case 'stopped':
+      return 'Bridge stopped'
+    case 'idle':
+      return 'Bridge idle'
+  }
+}
+
 function App() {
   const intakeId = useId()
   const runnerCommandId = useId()
   const runnerDirectoryId = useId()
+  const bridgePortId = useId()
   const [releaseUrl, setReleaseUrl] = useState(stonefruitReleaseUrl)
   const [runnerCommand, setRunnerCommand] = useState(defaultRunnerCommand)
   const [runnerDirectory, setRunnerDirectory] = useState(defaultRunnerDirectory)
+  const [bridgePort, setBridgePort] = useState(defaultBridgePort)
   const [runnerSession, setRunnerSession] = useState<RunnerSession | null>(null)
+  const [bridgeSession, setBridgeSession] = useState<BridgeSession | null>(null)
   const [runnerError, setRunnerError] = useState('')
+  const [bridgeError, setBridgeError] = useState('')
   const [runnerBusy, setRunnerBusy] = useState(false)
+  const [bridgeBusy, setBridgeBusy] = useState(false)
 
   const intake = validateReleaseIntake(releaseUrl)
   const provider = detectReleaseProvider(releaseUrl)
@@ -137,8 +169,27 @@ function App() {
     }
   }
 
+  async function refreshBridge(showErrors = true) {
+    try {
+      const session = await fetchBridgeSession()
+      setBridgeSession(session)
+      if (showErrors) {
+        setBridgeError('')
+      }
+    } catch (error) {
+      if (!showErrors) {
+        return
+      }
+
+      setBridgeError(
+        error instanceof Error ? error.message : 'Could not reach the Grecko bridge API.',
+      )
+    }
+  }
+
   useEffect(() => {
     void refreshRunner()
+    void refreshBridge()
   }, [])
 
   useEffect(() => {
@@ -191,6 +242,66 @@ function App() {
     }
   }
 
+  async function handleBridgeCheck() {
+    setBridgeBusy(true)
+
+    try {
+      const session = await checkBridgeSession({
+        cwd: runnerDirectory,
+        port: Number(bridgePort) || Number(defaultBridgePort),
+      })
+      setBridgeSession(session)
+      setBridgeError('')
+    } catch (error) {
+      setBridgeError(
+        error instanceof Error
+          ? error.message
+          : 'Grecko could not inspect the Tauri MCP bridge.',
+      )
+    } finally {
+      setBridgeBusy(false)
+    }
+  }
+
+  async function handleBridgeStart() {
+    setBridgeBusy(true)
+
+    try {
+      const session = await startBridgeSession({
+        cwd: runnerDirectory,
+        port: Number(bridgePort) || Number(defaultBridgePort),
+      })
+      setBridgeSession(session)
+      setBridgeError('')
+    } catch (error) {
+      setBridgeError(
+        error instanceof Error
+          ? error.message
+          : 'Grecko could not start the Tauri MCP bridge session.',
+      )
+    } finally {
+      setBridgeBusy(false)
+    }
+  }
+
+  async function handleBridgeStop() {
+    setBridgeBusy(true)
+
+    try {
+      const session = await stopBridgeSession()
+      setBridgeSession(session)
+      setBridgeError('')
+    } catch (error) {
+      setBridgeError(
+        error instanceof Error
+          ? error.message
+          : 'Grecko could not stop the Tauri MCP bridge session.',
+      )
+    } finally {
+      setBridgeBusy(false)
+    }
+  }
+
   return (
     <div className="shell">
       <header className="topbar">
@@ -207,6 +318,7 @@ function App() {
         <nav className="topbar__nav" aria-label="Sections">
           <a href="#control-room">Control Room</a>
           <a href="#runner">Runner</a>
+          <a href="#bridge">Bridge</a>
           <a href="#dossier">Dossier</a>
           <a href="#harnesses">Harnesses</a>
         </nav>
@@ -439,6 +551,122 @@ function App() {
 
               <pre className="runner-log">
                 {runnerSession?.logs.join('\n') || 'No process output yet.'}
+              </pre>
+            </article>
+          </div>
+        </section>
+
+        <section className="panel panel--bridge" id="bridge">
+          <div className="panel__header">
+            <p className="eyebrow">MCP bridge</p>
+            <h2>Inspect Tauri bridge readiness and driver sessions</h2>
+          </div>
+
+          <div className="runner-grid">
+            <form
+              className="runner-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void handleBridgeCheck()
+              }}
+            >
+              <label className="field" htmlFor={bridgePortId}>
+                <span>Driver port</span>
+                <input
+                  id={bridgePortId}
+                  name="bridge-port"
+                  type="text"
+                  value={bridgePort}
+                  onChange={(event) => setBridgePort(event.target.value)}
+                  placeholder={defaultBridgePort}
+                />
+              </label>
+
+              <p className="helper">
+                Grecko uses the published `tauri-mcp` CLI if it is installed,
+                otherwise it falls back to
+                `npx --package @hypothesi/tauri-mcp-cli tauri-mcp`. The target
+                directory comes from the runner form above.
+              </p>
+
+              <div className="runner-actions">
+                <button
+                  className="button button--muted"
+                  type="submit"
+                  disabled={bridgeBusy}
+                >
+                  {bridgeBusy ? 'Working...' : 'Check bridge'}
+                </button>
+                <button
+                  className="button"
+                  type="button"
+                  disabled={bridgeBusy}
+                  onClick={() => void handleBridgeStart()}
+                >
+                  Start bridge session
+                </button>
+                <button
+                  className="button button--muted"
+                  type="button"
+                  disabled={bridgeBusy || !bridgeSession}
+                  onClick={() => void handleBridgeStop()}
+                >
+                  Stop bridge session
+                </button>
+              </div>
+
+              {bridgeError ? (
+                <p className="runner-error" role="alert">
+                  {bridgeError}
+                </p>
+              ) : null}
+            </form>
+
+            <article className="runner-card">
+              <div className="runner-status">
+                <span
+                  className={`provider provider--${
+                    bridgeSession?.status ?? 'idle'
+                  }`}
+                >
+                  {formatBridgeStatus(bridgeSession)}
+                </span>
+                <p>
+                  {bridgeSession?.setupSummary ??
+                    'No bridge inspection yet. Check the target repo first.'}
+                </p>
+              </div>
+
+              <dl className="facts facts--runner">
+                <div>
+                  <dt>Setup</dt>
+                  <dd>{bridgeSession?.setupDetected ? 'Detected' : 'Missing'}</dd>
+                </div>
+                <div>
+                  <dt>Connected</dt>
+                  <dd>{bridgeSession?.connected ? 'Yes' : 'No'}</dd>
+                </div>
+                <div>
+                  <dt>Port</dt>
+                  <dd>{bridgeSession?.port ?? bridgePort}</dd>
+                </div>
+                <div>
+                  <dt>Host</dt>
+                  <dd>{bridgeSession?.host ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt>Identifier</dt>
+                  <dd>{bridgeSession?.identifier ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt>CLI</dt>
+                  <dd>{bridgeSession?.command ?? 'Not checked yet'}</dd>
+                </div>
+              </dl>
+
+              <pre className="runner-log">
+                {bridgeSession?.logs.join('\n') ||
+                  'No bridge logs yet. For Stonefruit today, this should report that the MCP bridge plugin is not installed.'}
               </pre>
             </article>
           </div>

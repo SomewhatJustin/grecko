@@ -323,6 +323,7 @@
 }
 
 .panel--runner,
+.panel--bridge,
 .panel--findings,
 .panel--harnesses {
   margin: 0 2rem 1.25rem;
@@ -399,7 +400,17 @@
   color: var(--accent-strong);
 }
 
+.provider--ready {
+  background: rgba(41, 96, 92, 0.1);
+  color: var(--accent-strong);
+}
+
 .provider--failed {
+  background: rgba(136, 57, 39, 0.1);
+  color: var(--danger);
+}
+
+.provider--unavailable {
   background: rgba(136, 57, 39, 0.1);
   color: var(--danger);
 }
@@ -489,6 +500,7 @@
   .topbar,
   .hero,
   .grid,
+  .panel--bridge,
   .panel--findings,
   .panel--harnesses {
     padding-left: 1rem;
