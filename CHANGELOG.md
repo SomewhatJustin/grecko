@@ -3,6 +3,19 @@
 All notable changes to this project are documented in this file.
 This project uses a four-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.1.0] - 2026-03-22
+
+### Added
+
+- A local runner API that can launch and stop one target app command at a time.
+- A Grecko runner panel showing active PID, working directory, exit state, and log tail.
+- Server-side test coverage for runner validation and process lifecycle behavior.
+
+### Changed
+
+- `npm run dev` now starts both the frontend and the local runner API.
+- Architecture and README docs now describe the executable app-launch path.
+
 ## [0.1.0.0] - 2026-03-22
 
 ### Added

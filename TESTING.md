@@ -21,6 +21,8 @@ npm run test:run
 
 - Unit tests
   - provider detection and intake validation in `src/lib`
+- Runner tests
+  - local process validation plus start/stop lifecycle coverage in `server/`
 - UI tests
   - launch surface rendering and intake state changes in `src/App.test.tsx`
 
@@ -29,4 +31,5 @@ npm run test:run
 - Keep tests next to the source they verify.
 - Prefer behavior assertions over implementation details.
 - When changing intake logic, add a regression test for the specific URL case.
+- When changing runner logic, cover both the success path and the stop path.
 - When changing the launch surface, verify the user-visible copy or interaction.

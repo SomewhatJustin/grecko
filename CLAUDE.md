@@ -3,8 +3,8 @@
 ## Product
 
 Grecko is a release-confidence tool for Tauri apps. The first repository cut is
-a frontend prototype shaped around public release-page intake and a verdict-led
-control room.
+a frontend prototype shaped around public release-page intake, a local app
+runner, and a verdict-led control room.
 
 ## Harness Notes
 
@@ -12,6 +12,7 @@ control room.
   `npx -y install-mcp @hypothesi/tauri-mcp-server --client claude-code`
 - The Stonefruit GitLab releases URL is the primary real-world seed fixture:
   `https://gitlab.futo.org/stonefruit/stonefruit/-/releases`
+- The local runner API listens on `http://127.0.0.1:4174` by default.
 
 ## Testing
 
