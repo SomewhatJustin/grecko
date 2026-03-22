@@ -10,6 +10,9 @@ runner, and a verdict-led control room.
 
 - Prefer the Hypothesi Tauri MCP server for app-aware harness control:
   `npx -y install-mcp @hypothesi/tauri-mcp-server --client claude-code`
+- Prefer the CLI fallback for local bridge inspection when `tauri-mcp` is not
+  installed globally:
+  `npx -y --package @hypothesi/tauri-mcp-cli tauri-mcp`
 - The Stonefruit GitLab releases URL is the primary real-world seed fixture:
   `https://gitlab.futo.org/stonefruit/stonefruit/-/releases`
 - The local runner API listens on `http://127.0.0.1:4174` by default.

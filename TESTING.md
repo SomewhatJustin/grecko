@@ -23,6 +23,8 @@ npm run test:run
   - provider detection and intake validation in `src/lib`
 - Runner tests
   - local process validation plus start/stop lifecycle coverage in `server/`
+- Bridge tests
+  - plugin detection and CLI-status parsing in `server/bridge-store.test.js`
 - UI tests
   - launch surface rendering and intake state changes in `src/App.test.tsx`
 
@@ -32,4 +34,5 @@ npm run test:run
 - Prefer behavior assertions over implementation details.
 - When changing intake logic, add a regression test for the specific URL case.
 - When changing runner logic, cover both the success path and the stop path.
+- When changing bridge logic, cover both missing-setup and valid-setup cases.
 - When changing the launch surface, verify the user-visible copy or interaction.

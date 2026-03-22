@@ -10,6 +10,7 @@ This first repo cut turns the earlier planning work into a concrete prototype:
 - release-page intake seeded with the Stonefruit GitLab releases URL
 - a mocked run dossier with verdict, platform coverage, and findings
 - a local app runner that can launch and stop a target command
+- Tauri MCP bridge inspection and session controls
 - repo-local docs for architecture, testing, and Tauri MCP integration notes
 
 ## Current Scope
@@ -19,6 +20,7 @@ This repository is intentionally narrow:
 - public GitHub and GitLab release page intake
 - Linux and Android as the first explicit platform envelope
 - a working local app runner for user-supplied launch commands
+- Tauri MCP bridge setup detection and driver-session controls
 - deterministic verdict language and evidence-first UI direction
 
 The full verification engine, persistence layer, and baseline registry are still
@@ -79,6 +81,26 @@ The runner API:
 - starts the process locally on your machine
 - exposes current PID, status, exit information, and recent log output
 - lets the UI stop the active process cleanly
+
+## MCP Bridge
+
+Grecko now checks and controls the Tauri MCP bridge as a separate step.
+
+- `Check bridge` inspects the target repo for `tauri-plugin-mcp-bridge` and
+  queries `tauri-mcp driver-session status --json`
+- `Start bridge session` starts a driver session only if the plugin is already
+  configured in the target app
+- `Stop bridge session` tears down the current CLI session
+
+Grecko prefers a global `tauri-mcp` binary when available and falls back to:
+
+```bash
+npx -y --package @hypothesi/tauri-mcp-cli tauri-mcp
+```
+
+The current Stonefruit verification result is accurate but incomplete: Grecko
+can run Stonefruit today, but Stonefruit does not yet have the Tauri MCP bridge
+plugin installed, so bridge-session start is correctly blocked.
 
 ## Verification
 

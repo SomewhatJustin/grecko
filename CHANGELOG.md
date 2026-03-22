@@ -3,6 +3,18 @@
 All notable changes to this project are documented in this file.
 This project uses a four-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.2.0] - 2026-03-22
+
+### Added
+
+- A bridge API and UI for checking Tauri MCP setup and managing driver sessions.
+- Server-side bridge tests for plugin detection and CLI response parsing.
+
+### Changed
+
+- Grecko now reports the real bridge state of a target repo, including explicit
+  missing-plugin status for Stonefruit today.
+
 ## [0.1.1.0] - 2026-03-22
 
 ### Added
