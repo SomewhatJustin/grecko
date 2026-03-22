@@ -1,10 +1,16 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import './App.css'
 import {
   detectReleaseProvider,
   stonefruitReleaseUrl,
   validateReleaseIntake,
 } from './lib/release-intake'
+import {
+  fetchRunnerSession,
+  startRunnerSession,
+  stopRunnerSession,
+  type RunnerSession,
+} from './lib/runner-client'
 
 const runSnapshot = {
   verdict: 'investigate',
@@ -79,12 +85,111 @@ const dossierNotes = [
   'Evidence bundles stay useful even when one artifact is missing, as long as the warning is explicit.',
 ] as const
 
+const defaultRunnerCommand = 'npm run tauri dev'
+const defaultRunnerDirectory = '/home/justin/Developer/stonefruit'
+
+function formatRunnerStatus(session: RunnerSession | null) {
+  if (!session) {
+    return 'Runner idle'
+  }
+
+  switch (session.status) {
+    case 'running':
+      return 'App running'
+    case 'stopped':
+      return 'Stopped'
+    case 'failed':
+      return 'Launch failed'
+    case 'exited':
+      return 'Exited cleanly'
+  }
+}
+
 function App() {
-  const inputId = useId()
+  const intakeId = useId()
+  const runnerCommandId = useId()
+  const runnerDirectoryId = useId()
   const [releaseUrl, setReleaseUrl] = useState(stonefruitReleaseUrl)
+  const [runnerCommand, setRunnerCommand] = useState(defaultRunnerCommand)
+  const [runnerDirectory, setRunnerDirectory] = useState(defaultRunnerDirectory)
+  const [runnerSession, setRunnerSession] = useState<RunnerSession | null>(null)
+  const [runnerError, setRunnerError] = useState('')
+  const [runnerBusy, setRunnerBusy] = useState(false)
 
   const intake = validateReleaseIntake(releaseUrl)
   const provider = detectReleaseProvider(releaseUrl)
+
+  async function refreshRunner(showErrors = true) {
+    try {
+      const session = await fetchRunnerSession()
+      setRunnerSession(session)
+      if (showErrors) {
+        setRunnerError('')
+      }
+    } catch (error) {
+      if (!showErrors) {
+        return
+      }
+
+      setRunnerError(
+        error instanceof Error ? error.message : 'Could not reach the Grecko runner API.',
+      )
+    }
+  }
+
+  useEffect(() => {
+    void refreshRunner()
+  }, [])
+
+  useEffect(() => {
+    if (runnerSession?.status !== 'running') {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshRunner(false)
+    }, 1_000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [runnerSession?.id, runnerSession?.status])
+
+  async function handleRunnerStart(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setRunnerBusy(true)
+
+    try {
+      const session = await startRunnerSession({
+        command: runnerCommand,
+        cwd: runnerDirectory,
+      })
+      setRunnerSession(session)
+      setRunnerError('')
+    } catch (error) {
+      setRunnerError(
+        error instanceof Error ? error.message : 'Grecko could not start that app command.',
+      )
+    } finally {
+      setRunnerBusy(false)
+    }
+  }
+
+  async function handleRunnerStop() {
+    setRunnerBusy(true)
+
+    try {
+      const session = await stopRunnerSession()
+      setRunnerSession(session)
+      setRunnerError('')
+    } catch (error) {
+      setRunnerError(
+        error instanceof Error ? error.message : 'Grecko could not stop the active app.',
+      )
+    } finally {
+      setRunnerBusy(false)
+    }
+  }
 
   return (
     <div className="shell">
@@ -101,6 +206,7 @@ function App() {
 
         <nav className="topbar__nav" aria-label="Sections">
           <a href="#control-room">Control Room</a>
+          <a href="#runner">Runner</a>
           <a href="#dossier">Dossier</a>
           <a href="#harnesses">Harnesses</a>
         </nav>
@@ -142,10 +248,10 @@ function App() {
               <h2>Release page intake</h2>
             </div>
 
-            <label className="field" htmlFor={inputId}>
+            <label className="field" htmlFor={intakeId}>
               <span>Public release URL</span>
               <input
-                id={inputId}
+                id={intakeId}
                 name="release-url"
                 type="url"
                 value={releaseUrl}
@@ -213,6 +319,129 @@ function App() {
               ))}
             </div>
           </article>
+        </section>
+
+        <section className="panel panel--runner" id="runner">
+          <div className="panel__header">
+            <p className="eyebrow">App runner</p>
+            <h2>Launch the app Grecko should inspect</h2>
+          </div>
+
+          <div className="runner-grid">
+            <form className="runner-form" onSubmit={handleRunnerStart}>
+              <label className="field" htmlFor={runnerCommandId}>
+                <span>Launch command</span>
+                <input
+                  id={runnerCommandId}
+                  name="runner-command"
+                  type="text"
+                  value={runnerCommand}
+                  onChange={(event) => setRunnerCommand(event.target.value)}
+                  placeholder={defaultRunnerCommand}
+                />
+              </label>
+
+              <label className="field" htmlFor={runnerDirectoryId}>
+                <span>Working directory</span>
+                <input
+                  id={runnerDirectoryId}
+                  name="runner-directory"
+                  type="text"
+                  value={runnerDirectory}
+                  onChange={(event) => setRunnerDirectory(event.target.value)}
+                  placeholder={defaultRunnerDirectory}
+                />
+              </label>
+
+              <div className="runner-actions">
+                <button
+                  className="button"
+                  type="submit"
+                  disabled={runnerBusy || runnerSession?.status === 'running'}
+                >
+                  {runnerBusy ? 'Working...' : 'Run app'}
+                </button>
+                <button
+                  className="button button--muted"
+                  type="button"
+                  disabled={runnerBusy || runnerSession?.status !== 'running'}
+                  onClick={() => void handleRunnerStop()}
+                >
+                  Stop app
+                </button>
+                <button
+                  className="button button--muted"
+                  type="button"
+                  disabled={runnerBusy}
+                  onClick={() => void refreshRunner()}
+                >
+                  Refresh status
+                </button>
+              </div>
+
+              <p className="helper">
+                Grecko runs exactly the command you provide through a local API
+                on your machine. Start with a Tauri dev command inside the target
+                project directory.
+              </p>
+
+              {runnerError ? (
+                <p className="runner-error" role="alert">
+                  {runnerError}
+                </p>
+              ) : null}
+            </form>
+
+            <article className="runner-card">
+              <div className="runner-status">
+                <span
+                  className={`provider provider--${
+                    runnerSession?.status ?? 'idle'
+                  }`}
+                >
+                  {formatRunnerStatus(runnerSession)}
+                </span>
+                <p>
+                  {runnerSession
+                    ? 'Grecko is tracking one active or recent app session.'
+                    : 'No app session yet. Start one from the control form.'}
+                </p>
+              </div>
+
+              <dl className="facts facts--runner">
+                <div>
+                  <dt>PID</dt>
+                  <dd>{runnerSession?.pid ?? 'Not started'}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{runnerSession?.status ?? 'idle'}</dd>
+                </div>
+                <div>
+                  <dt>Exit</dt>
+                  <dd>
+                    {runnerSession?.exitCode ?? runnerSession?.signal ?? 'Still running'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Started</dt>
+                  <dd>{runnerSession?.startedAt ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt>Directory</dt>
+                  <dd>{runnerSession?.cwd ?? runnerDirectory}</dd>
+                </div>
+                <div>
+                  <dt>Command</dt>
+                  <dd>{runnerSession?.command ?? runnerCommand}</dd>
+                </div>
+              </dl>
+
+              <pre className="runner-log">
+                {runnerSession?.logs.join('\n') || 'No process output yet.'}
+              </pre>
+            </article>
+          </div>
         </section>
 
         <section className="panel panel--findings" id="dossier">

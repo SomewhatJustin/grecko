@@ -13,6 +13,7 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(screen.getByDisplayValue(/gitlab\.futo\.org\/stonefruit/i)).toBeVisible()
     expect(screen.getByText(/GitLab release detected/i)).toBeVisible()
+    expect(screen.getByDisplayValue(/npm run tauri dev/i)).toBeVisible()
   })
 
   it('updates the intake banner when the URL is unsupported', () => {
