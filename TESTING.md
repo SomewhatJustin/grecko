@@ -1,0 +1,32 @@
+# Testing
+
+100% test coverage is the key to great vibe coding. Tests let you move fast,
+trust your instincts, and ship with confidence. Without them, vibe coding is
+just yolo coding.
+
+## Framework
+
+- Vitest
+- Testing Library
+- JSDOM
+
+## Commands
+
+```bash
+npm run test
+npm run test:run
+```
+
+## Current Layers
+
+- Unit tests
+  - provider detection and intake validation in `src/lib`
+- UI tests
+  - launch surface rendering and intake state changes in `src/App.test.tsx`
+
+## Conventions
+
+- Keep tests next to the source they verify.
+- Prefer behavior assertions over implementation details.
+- When changing intake logic, add a regression test for the specific URL case.
+- When changing the launch surface, verify the user-visible copy or interaction.
