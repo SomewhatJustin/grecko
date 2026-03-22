@@ -21,6 +21,8 @@ npm run test:run
 
 - Unit tests
   - provider detection and intake validation in `src/lib`
+- Run dossier tests
+  - deterministic execution verdict and stage transitions in `server/runs-store.test.js`
 - Runner tests
   - local process validation plus start/stop lifecycle coverage in `server/`
 - Bridge tests
@@ -34,5 +36,6 @@ npm run test:run
 - Prefer behavior assertions over implementation details.
 - When changing intake logic, add a regression test for the specific URL case.
 - When changing runner logic, cover both the success path and the stop path.
+- When changing run-verdict logic, cover both incomplete and fully-connected cases.
 - When changing bridge logic, cover both missing-setup and valid-setup cases.
 - When changing the launch surface, verify the user-visible copy or interaction.

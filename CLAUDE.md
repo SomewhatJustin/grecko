@@ -3,8 +3,8 @@
 ## Product
 
 Grecko is a release-confidence tool for Tauri apps. The first repository cut is
-a frontend prototype shaped around public release-page intake, a local app
-runner, and a verdict-led control room.
+a control-room prototype shaped around public release-page intake, persisted run
+dossiers, a local app runner, and a verdict-led evidence flow.
 
 ## Harness Notes
 
@@ -16,6 +16,9 @@ runner, and a verdict-led control room.
 - The Stonefruit GitLab releases URL is the primary real-world seed fixture:
   `https://gitlab.futo.org/stonefruit/stonefruit/-/releases`
 - The local runner API listens on `http://127.0.0.1:4174` by default.
+- Persisted run data is stored under `.grecko-data/runs`.
+- Stonefruit is currently a verified `investigate` target because the app can
+  launch but the MCP bridge plugin is not installed yet.
 
 ## Testing
 

@@ -3,6 +3,25 @@
 All notable changes to this project are documented in this file.
 This project uses a four-digit version format: `MAJOR.MINOR.PATCH.MICRO`.
 
+## [0.1.3.0] - 2026-03-22
+
+### Added
+
+- Real GitHub and GitLab release resolution with persisted run records under
+  `.grecko-data/runs`.
+- Run execution and evidence-sync routes that attach runner and bridge state to
+  a saved case file.
+- Deterministic run verdict evaluation covering intake, launch, and bridge
+  stages.
+- Server-side test coverage for run stage and verdict transitions.
+
+### Changed
+
+- The control room now works from real run records instead of mocked dossier
+  state.
+- Stonefruit verification now records an executable `investigate` run with real
+  boot logs and explicit `BRIDGE_PLUGIN_MISSING` evidence.
+
 ## [0.1.2.0] - 2026-03-22
 
 ### Added

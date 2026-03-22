@@ -1,5 +1,6 @@
 import http from 'node:http'
 import { checkBridge, getBridgeSession, startBridge, stopBridge } from './bridge-store.js'
+import { createRun, executeRun, listRuns, syncRunExecution } from './runs-store.js'
 import { getRunnerSession, startRunner, stopRunner } from './runner-store.js'
 
 const PORT = Number(process.env.GRECKO_API_PORT ?? 4174)
@@ -74,6 +75,47 @@ const server = http.createServer(async (request, response) => {
 
   if (request.url === '/api/runner/stop' && request.method === 'POST') {
     sendJson(response, 200, { session: stopRunner() })
+    return
+  }
+
+  if (request.url === '/api/runs' && request.method === 'GET') {
+    sendJson(response, 200, { runs: listRuns() })
+    return
+  }
+
+  if (request.url === '/api/runs/start' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { run: await createRun(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not create run.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/runs/execute' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { run: await executeRun(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not execute run.',
+      })
+    }
+    return
+  }
+
+  if (request.url === '/api/runs/sync' && request.method === 'POST') {
+    try {
+      const payload = await readJson(request)
+      sendJson(response, 200, { run: syncRunExecution(payload) })
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'Could not sync run execution.',
+      })
+    }
     return
   }
 

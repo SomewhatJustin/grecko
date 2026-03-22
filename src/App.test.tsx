@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import App from './App'
 
 describe('App', () => {
-  it('renders the Grecko launch surface with the seeded Stonefruit intake', () => {
+  it('renders the Grecko launch surface with the seeded Stonefruit intake', async () => {
     render(<App />)
 
     expect(
@@ -13,7 +13,7 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(screen.getByDisplayValue(/gitlab\.futo\.org\/stonefruit/i)).toBeVisible()
     expect(screen.getByText(/GitLab release detected/i)).toBeVisible()
-    expect(screen.getByDisplayValue(/npm run tauri dev/i)).toBeVisible()
+    expect(await screen.findByDisplayValue(/npm run tauri:dev/i)).toBeVisible()
   })
 
   it('updates the intake banner when the URL is unsupported', () => {

@@ -7,10 +7,11 @@ and answer one question clearly: `ship`, `investigate`, or `block`.
 This first repo cut turns the earlier planning work into a concrete prototype:
 
 - a branded launch surface for `grecko.dev`
-- release-page intake seeded with the Stonefruit GitLab releases URL
-- a mocked run dossier with verdict, platform coverage, and findings
+- persisted release-page intake seeded with the Stonefruit GitLab releases URL
+- executable run dossiers with verdict, platform coverage, and findings
 - a local app runner that can launch and stop a target command
 - Tauri MCP bridge inspection and session controls
+- run execution and sync flows that attach launch and bridge evidence to a saved run
 - repo-local docs for architecture, testing, and Tauri MCP integration notes
 
 ## Current Scope
@@ -23,9 +24,10 @@ This repository is intentionally narrow:
 - Tauri MCP bridge setup detection and driver-session controls
 - deterministic verdict language and evidence-first UI direction
 
-The full verification engine, persistence layer, and baseline registry are still
-future work. This repo now establishes the product shape plus the first local
-execution path for launching an app Grecko should inspect.
+The full verification engine and baseline registry are still future work. This
+repo now establishes the product shape plus the first local execution path for
+resolving a release, launching the app, recording bridge state, and keeping the
+run dossier in sync.
 
 ## Example Release Target
 
@@ -82,6 +84,23 @@ The runner API:
 - exposes current PID, status, exit information, and recent log output
 - lets the UI stop the active process cleanly
 
+## Runs
+
+Grecko now persists intake and execution records under `.grecko-data/runs`.
+
+- `Create run` resolves a public release page into a saved intake record
+- `Execute active run` launches the configured app, waits for early boot logs,
+  checks the bridge state, and stores both snapshots on the run
+- `Sync evidence` refreshes the active run from the current runner and bridge
+  state so the verdict can move from `running` to `completed`
+
+The current verdict engine is deterministic:
+
+- `block` when required Linux or Android assets are missing, or when launch fails
+- `investigate` when intake is ready but launch or bridge evidence is incomplete
+- `ship` only when intake is ready, the app launch succeeded, and the Tauri MCP
+  bridge is connected
+
 ## MCP Bridge
 
 Grecko now checks and controls the Tauri MCP bridge as a separate step.
@@ -100,7 +119,8 @@ npx -y --package @hypothesi/tauri-mcp-cli tauri-mcp
 
 The current Stonefruit verification result is accurate but incomplete: Grecko
 can run Stonefruit today, but Stonefruit does not yet have the Tauri MCP bridge
-plugin installed, so bridge-session start is correctly blocked.
+plugin installed, so Grecko records a real `investigate` run with
+`BRIDGE_PLUGIN_MISSING` instead of pretending the bridge layer is healthy.
 
 ## Verification
 
